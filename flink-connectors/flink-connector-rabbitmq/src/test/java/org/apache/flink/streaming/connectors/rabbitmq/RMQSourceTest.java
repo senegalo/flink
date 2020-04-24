@@ -129,7 +129,7 @@ public class RMQSourceTest {
 		Mockito.when(connection.createChannel()).thenReturn(null);
 
 		RMQSource<String> rmqSource = new RMQSource<>(
-			connectionConfig, "queueDummy", true, new StringDeserializationScheme());
+			connectionConfig, "queueDummy", true, new DummyRMQDeliveryParser());
 		try {
 			rmqSource.open(new Configuration());
 		} catch (RuntimeException ex) {
@@ -169,7 +169,7 @@ public class RMQSourceTest {
 			// let some time pass
 			Thread.sleep(5);
 
-			// check if the correct number of messages have been snapshotted
+			// check if the correct number of messages have been added to the snapshot
 			final long numIds = lastSnapshotId - previousSnapshotId;
 
 			RMQTestSource sourceCopy = new RMQTestSource();
@@ -271,7 +271,7 @@ public class RMQSourceTest {
 		RMQConnectionConfig.Builder builder = new RMQConnectionConfig.Builder();
 		builder.setHost("hostTest").setPort(999).setUserName("userTest").setPassword("passTest").setVirtualHost("/");
 		ConstructorTestClass testObj = new ConstructorTestClass(
-			builder.build(), "queueTest", false, new StringDeserializationScheme());
+			builder.build(), "queueTest", false, new DummyRMQDeliveryParser());
 
 		try {
 			testObj.open(new Configuration());
@@ -292,8 +292,8 @@ public class RMQSourceTest {
 		public ConstructorTestClass(RMQConnectionConfig rmqConnectionConfig,
 									String queueName,
 									boolean usesCorrelationId,
-									DeserializationSchema<String> deserializationSchema) throws Exception {
-			super(rmqConnectionConfig, queueName, usesCorrelationId, deserializationSchema);
+									RMQDeliveryParser<String> parser) throws Exception {
+			super(rmqConnectionConfig, queueName, usesCorrelationId, parser);
 			RMQConnectionConfig.Builder builder = new RMQConnectionConfig.Builder();
 			builder.setHost("hostTest").setPort(999).setUserName("userTest").setPassword("passTest").setVirtualHost("/");
 			factory = Mockito.spy(builder.build().getConnectionFactory());
@@ -338,6 +338,26 @@ public class RMQSourceTest {
 		}
 	}
 
+	private class DummyRMQDeliveryParser implements RMQDeliveryParser<String> {
+
+		StringDeserializationScheme scheme = new StringDeserializationScheme();
+
+		@Override
+		public String parse(Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
+			return scheme.deserialize(body);
+		}
+
+		@Override
+		public String getCorrelationID(Envelope envelope, AMQP.BasicProperties properties, byte[] body) {
+			return properties.getCorrelationId();
+		}
+
+		@Override
+		public TypeInformation<String> getProducedType() {
+			return TypeExtractor.getForClass(String.class);
+		}
+	}
+
 	private class RMQTestSource extends RMQSource<String> {
 
 		private ArrayDeque<Tuple2<Long, Set<String>>> restoredState;
@@ -345,7 +365,7 @@ public class RMQSourceTest {
 		public RMQTestSource() {
 			super(new RMQConnectionConfig.Builder().setHost("hostTest")
 					.setPort(999).setUserName("userTest").setPassword("passTest").setVirtualHost("/").build()
-				, "queueDummy", true, new StringDeserializationScheme());
+				, "queueDummy", true, new DummyRMQDeliveryParser());
 		}
 
 		@Override
@@ -439,7 +459,7 @@ public class RMQSourceTest {
 		}
 
 		@Override
-		public void collectWithTimestamp(java.lang.String element, long timestamp) {
+		public void collectWithTimestamp(String element, long timestamp) {
 		}
 
 		@Override
