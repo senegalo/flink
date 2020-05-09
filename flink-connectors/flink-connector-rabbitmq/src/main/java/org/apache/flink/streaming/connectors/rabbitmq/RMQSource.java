@@ -100,7 +100,8 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * @param deserializationSchema A {@link DeserializationSchema} for turning the bytes received
 	 *               				into Java objects.
 	 */
-	public RMQSource(RMQConnectionConfig rmqConnectionConfig, String queueName, DeserializationSchema<OUT> deserializationSchema) {
+	public RMQSource(RMQConnectionConfig rmqConnectionConfig, String queueName,
+					DeserializationSchema<OUT> deserializationSchema) {
 		this(rmqConnectionConfig, queueName, false, deserializationSchema);
 	}
 
@@ -117,7 +118,8 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * @param deserializationSchema A {@link DeserializationSchema} for turning the bytes received
 	 *                              into Java objects.
 	 */
-	public RMQSource(RMQConnectionConfig rmqConnectionConfig, String queueName, boolean usesCorrelationId, DeserializationSchema<OUT> deserializationSchema) {
+	public RMQSource(RMQConnectionConfig rmqConnectionConfig,
+					String queueName, boolean usesCorrelationId, DeserializationSchema<OUT> deserializationSchema) {
 		super(String.class);
 		this.rmqConnectionConfig = rmqConnectionConfig;
 		this.queueName = queueName;
@@ -132,7 +134,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * <p>For exactly-once, please use the constructor
 	 * {@link RMQSource#RMQSource(RMQConnectionConfig, String, boolean, RMQDeliveryParser)}.
 	 *
-	 * It also uses the provided {@link RMQDeliveryParser} to parse both the correlationID and the message.
+	 * <p>It also uses the provided {@link RMQDeliveryParser} to parse both the correlationID and the message.
 	 * @param rmqConnectionConfig The RabbiMQ connection configuration {@link RMQConnectionConfig}.
 	 * @param queueName  The queue to receive messages from.
 	 * @param deliveryParser A {@link RMQDeliveryParser} for parsing the RMQDelivery.
@@ -148,7 +150,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * undefined. If in doubt, set usesCorrelationId to false. When correlation ids are not
 	 * used, this source has at-least-once processing semantics when checkpointing is enabled.
 	 *
-	 * It also uses the provided {@link RMQDeliveryParser} to parse both the correlationID and the message.
+	 * <p>It also uses the provided {@link RMQDeliveryParser} to parse both the correlationID and the message.
 	 * @param rmqConnectionConfig The RabbiMQ connection configuration {@link RMQConnectionConfig}.
 	 * @param queueName The queue to receive messages from.
 	 * @param usesCorrelationId Whether the messages received are supplied with a <b>unique</b>
@@ -231,10 +233,10 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	/**
 	 * Parse and returns the body of the an AMQP message.
 	 *
-	 * If any of the constructors with the {@link DeserializationSchema} class was used to construct the source
+	 * <p>If any of the constructors with the {@link DeserializationSchema} class was used to construct the source
 	 * it uses the {@link DeserializationSchema#deserialize(byte[])} to parse the body of the AMQP message.
 	 *
-	 * If any of the constructors with the {@link RMQDeliveryParser } class was used to construct the source it uses the
+	 * <p>If any of the constructors with the {@link RMQDeliveryParser } class was used to construct the source it uses the
 	 * {@link RMQDeliveryParser#parse(Envelope, AMQP.BasicProperties, byte[])} method of that provided instance.
 	 *
 	 * @param envelope
@@ -254,10 +256,10 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	/**
 	 * Extracts and returns the correlationID.
 	 *
-	 * If any of the constructors with the {@link DeserializationSchema} class was used to construct the source
+	 * <p>If any of the constructors with the {@link DeserializationSchema} class was used to construct the source
 	 * it uses the {@link AMQP.BasicProperties#getCorrelationId()} to retrieve the correlationID.
 	 *
-	 * If any of the constructors with the {@link RMQDeliveryParser } class was used to construct the source it uses the
+	 * <p>If any of the constructors with the {@link RMQDeliveryParser } class was used to construct the source it uses the
 	 * {@link RMQDeliveryParser#getCorrelationID(Envelope, AMQP.BasicProperties, byte[])} to retrieve the correlationID.
 	 *
 	 * @param envelope
