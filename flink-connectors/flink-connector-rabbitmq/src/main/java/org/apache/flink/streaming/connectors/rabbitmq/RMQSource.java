@@ -18,6 +18,7 @@
 package org.apache.flink.streaming.connectors.rabbitmq;
 
 import org.apache.flink.api.common.functions.RuntimeContext;
+import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.ResultTypeQueryable;
 import org.apache.flink.configuration.Configuration;
@@ -78,6 +79,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	protected final String queueName;
 	private final boolean usesCorrelationId;
 	protected RMQDeliveryParser<OUT> deliveryParser;
+	protected DeserializationSchema<OUT> schema;
 
 	protected transient Connection connection;
 	protected transient Channel channel;
@@ -92,7 +94,45 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * checkpointing is enabled. No strong delivery guarantees when checkpointing is disabled.
 	 *
 	 * <p>For exactly-once, please use the constructor
+	 * {@link RMQSource#RMQSource(RMQConnectionConfig, String, boolean, DeserializationSchema)}.
+	 * @param rmqConnectionConfig The RabbiMQ connection configuration {@link RMQConnectionConfig}.
+	 * @param queueName  The queue to receive messages from.
+	 * @param deserializationSchema A {@link DeserializationSchema} for turning the bytes received
+	 *               				into Java objects.
+	 */
+	public RMQSource(RMQConnectionConfig rmqConnectionConfig, String queueName, DeserializationSchema<OUT> deserializationSchema) {
+		this(rmqConnectionConfig, queueName, false, deserializationSchema);
+	}
+
+	/**
+	 * Creates a new RabbitMQ source. For exactly-once, you must set the correlation ids of messages
+	 * at the producer. The correlation id must be unique. Otherwise the behavior of the source is
+	 * undefined. If in doubt, set usesCorrelationId to false. When correlation ids are not
+	 * used, this source has at-least-once processing semantics when checkpointing is enabled.
+	 * @param rmqConnectionConfig The RabbiMQ connection configuration {@link RMQConnectionConfig}.
+	 * @param queueName The queue to receive messages from.
+	 * @param usesCorrelationId Whether the messages received are supplied with a <b>unique</b>
+	 *                          id to deduplicate messages (in case of failed acknowledgments).
+	 *                          Only used when checkpointing is enabled.
+	 * @param deserializationSchema A {@link DeserializationSchema} for turning the bytes received
+	 *                              into Java objects.
+	 */
+	public RMQSource(RMQConnectionConfig rmqConnectionConfig, String queueName, boolean usesCorrelationId, DeserializationSchema<OUT> deserializationSchema) {
+		super(String.class);
+		this.rmqConnectionConfig = rmqConnectionConfig;
+		this.queueName = queueName;
+		this.usesCorrelationId = usesCorrelationId;
+		this.schema = deserializationSchema;
+	}
+
+	/**
+	 * Creates a new RabbitMQ source with at-least-once message processing guarantee when
+	 * checkpointing is enabled. No strong delivery guarantees when checkpointing is disabled.
+	 *
+	 * <p>For exactly-once, please use the constructor
 	 * {@link RMQSource#RMQSource(RMQConnectionConfig, String, boolean, RMQDeliveryParser)}.
+	 *
+	 * It also uses the provided {@link RMQDeliveryParser} to parse both the correlationID and the message.
 	 * @param rmqConnectionConfig The RabbiMQ connection configuration {@link RMQConnectionConfig}.
 	 * @param queueName  The queue to receive messages from.
 	 * @param deliveryParser A {@link RMQDeliveryParser} for parsing the RMQDelivery.
@@ -107,6 +147,8 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * at the producer. The correlation id must be unique. Otherwise the behavior of the source is
 	 * undefined. If in doubt, set usesCorrelationId to false. When correlation ids are not
 	 * used, this source has at-least-once processing semantics when checkpointing is enabled.
+	 *
+	 * It also uses the provided {@link RMQDeliveryParser} to parse both the correlationID and the message.
 	 * @param rmqConnectionConfig The RabbiMQ connection configuration {@link RMQConnectionConfig}.
 	 * @param queueName The queue to receive messages from.
 	 * @param usesCorrelationId Whether the messages received are supplied with a <b>unique</b>
@@ -186,6 +228,52 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 		}
 	}
 
+	/**
+	 * Parse and returns the body of the an AMQP message.
+	 *
+	 * If any of the constructors with the {@link DeserializationSchema} class was used to construct the source
+	 * it uses the {@link DeserializationSchema#deserialize(byte[])} to parse the body of the AMQP message.
+	 *
+	 * If any of the constructors with the {@link RMQDeliveryParser } class was used to construct the source it uses the
+	 * {@link RMQDeliveryParser#parse(Envelope, AMQP.BasicProperties, byte[])} method of that provided instance.
+	 *
+	 * @param envelope
+	 * @param properties
+	 * @param body
+	 * @return OUT
+	 * @throws IOException
+	 */
+	protected OUT parseBody(Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
+		if (deliveryParser != null){
+			return deliveryParser.parse(envelope, properties, body);
+		} else {
+			return schema.deserialize(body);
+		}
+	}
+
+	/**
+	 * Extracts and returns the correlationID.
+	 *
+	 * If any of the constructors with the {@link DeserializationSchema} class was used to construct the source
+	 * it uses the {@link AMQP.BasicProperties#getCorrelationId()} to retrieve the correlationID.
+	 *
+	 * If any of the constructors with the {@link RMQDeliveryParser } class was used to construct the source it uses the
+	 * {@link RMQDeliveryParser#getCorrelationID(Envelope, AMQP.BasicProperties, byte[])} to retrieve the correlationID.
+	 *
+	 * @param envelope
+	 * @param properties
+	 * @param body
+	 * @return String
+	 * @throws IOException
+	 */
+	protected String extractCorrelationID(Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
+		if (deliveryParser != null){
+			return deliveryParser.getCorrelationID(envelope, properties, body);
+		} else {
+			return properties.getCorrelationId();
+		}
+	}
+
 	@Override
 	public void run(SourceContext<OUT> ctx) throws Exception {
 		while (running) {
@@ -193,16 +281,20 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 
 			synchronized (ctx.getCheckpointLock()) {
 
-				Envelope envelop = delivery.getEnvelope();
+				Envelope envelope = delivery.getEnvelope();
 				AMQP.BasicProperties properties = delivery.getProperties();
 				byte[] body = delivery.getBody();
 
-				OUT result = deliveryParser.parse(envelop, properties, body);
+				OUT result = parseBody(envelope, properties, body);
+
+				if (schema != null && schema.isEndOfStream(result)) {
+					break;
+				}
 
 				if (!autoAck) {
 					final long deliveryTag = delivery.getEnvelope().getDeliveryTag();
 					if (usesCorrelationId) {
-						final String correlationId = deliveryParser.getCorrelationID(envelop, properties, body);
+						final String correlationId = extractCorrelationID(envelope, properties, body);
 						Preconditions.checkNotNull(correlationId, "RabbitMQ source was instantiated " +
 							"with usesCorrelationId set to true yet we couldn't extract the correlation id from it !");
 						if (!addId(correlationId)) {
