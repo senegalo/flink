@@ -9,14 +9,13 @@ import java.io.IOException;
 import java.io.Serializable;
 
 /**
- * Interface for the set of methods required to parse an RMQ delivery to an output.
+ * Interface for the set of methods required to parse an RMQ delivery.
  * @param <T> The output type of the {@link RMQSource}
  */
 public interface RMQDeliveryParser<T> extends Serializable, ResultTypeQueryable<T> {
 	/**
 	 * This method takes all the RabbitMQ delivery information supplied by the client and returns an output matching
-	 * the {@link RMQSource} output type. For more information about what the {@link Envelope},
-	 * {@link AMQP.BasicProperties} please refer to the RabbitMQ java client library.
+	 * the {@link RMQSource}.
 	 * @param envelope
 	 * @param properties
 	 * @param body
@@ -26,7 +25,7 @@ public interface RMQDeliveryParser<T> extends Serializable, ResultTypeQueryable<
 	public T parse(Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException;
 
 	/**
-	 * A method that extracts a unique correlation id from the RabbitMQ delivery and metadata. This ID is used for
+	 * A method that extracts a unique correlation id from the RabbitMQ delivery information. This ID is used for
 	 * deduplicating the messages in the RMQSource.
 	 * @param envelope
 	 * @param properties
