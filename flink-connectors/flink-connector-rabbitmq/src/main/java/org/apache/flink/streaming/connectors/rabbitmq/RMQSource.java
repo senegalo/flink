@@ -331,6 +331,6 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 
 	@Override
 	public TypeInformation<OUT> getProducedType() {
-		return deliveryParser.getProducedType();
+		return deliveryParser == null ? schema.getProducedType() : deliveryParser.getProducedType();
 	}
 }
