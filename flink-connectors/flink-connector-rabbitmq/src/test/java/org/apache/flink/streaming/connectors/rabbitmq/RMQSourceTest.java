@@ -316,6 +316,48 @@ public class RMQSourceTest {
 		assertEquals("passTest", testObj.getFactory().getPassword());
 	}
 
+	/**
+	 * Tests getting the correct correlation ID given which constructor was called.
+	 * if the constructor with the DeserializationSchema was called it uses the mocked AMQP property correlationID.
+	 * if the constructor with the RMQDeliveryParser was called it uses it's getCorrelationID which retrieves the mocked
+	 * AMQP property messageId.
+	 */
+	@Test
+	public void testExtractCorrelationId() throws Exception {
+		RMQTestSource sourceDeserializer = new RMQTestSource();
+		sourceDeserializer.initAMQPMocks();
+		String correlationID = sourceDeserializer.extractCorrelationID(
+			sourceDeserializer.mockedAMQPEnvelope, sourceDeserializer.mockedAMQPProperties, "".getBytes());
+		assertEquals("0", correlationID);
+
+		RMQTestSource sourceParser = new RMQTestSource(new CustomDeliveryParser());
+		sourceParser.initAMQPMocks();
+		correlationID = sourceParser.extractCorrelationID(
+			sourceParser.mockedAMQPEnvelope, sourceParser.mockedAMQPProperties, "".getBytes());
+		assertEquals("1-MESSAGE_ID", correlationID);
+	}
+
+	/**
+	 * Tests getting the correct body given which constructor was called.
+	 * if the constructor with the DeserilizationSchema was called it uses it parse the AMQP body.
+	 * if the constructor with the RMQDeliveryParser was called it uses it's parseBody method to retrieve the mocked AMQP
+	 * property messageID
+	 */
+	@Test
+	public void testParseBody() throws Exception {
+		RMQTestSource sourceDeserializer = new RMQTestSource();
+		sourceDeserializer.open(config);
+		String correlationID = sourceDeserializer.parseBody(
+			sourceDeserializer.mockedAMQPEnvelope, sourceDeserializer.mockedAMQPProperties, "I Love Turtles".getBytes());
+		assertEquals("I Love Turtles", correlationID);
+
+		RMQTestSource sourceParser = new RMQTestSource(new CustomDeliveryParser());
+		sourceParser.open(config);
+		correlationID = sourceParser.parseBody(
+			sourceParser.mockedAMQPEnvelope, sourceParser.mockedAMQPProperties, "".getBytes());
+		assertEquals("1-MESSAGE_ID", correlationID);
+	}
+
 	@Test
 	public void testOpen() throws Exception {
 		MockDeserializationSchema<String> deserializationSchema = new MockDeserializationSchema<>();
@@ -382,6 +424,24 @@ public class RMQSourceTest {
 		}
 	}
 
+	private class CustomDeliveryParser implements RMQDeliveryParser<String> {
+
+		@Override
+		public String parse(Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
+			return properties.getMessageId();
+		}
+
+		@Override
+		public String getCorrelationID(Envelope envelope, AMQP.BasicProperties properties, byte[] body) {
+			return properties.getMessageId();
+		}
+
+		@Override
+		public TypeInformation<String> getProducedType() {
+			return TypeExtractor.getForClass(String.class);
+		}
+	}
+
 	/**
 	 * A base class of {@link RMQTestSource} for testing functions that rely on the {@link RuntimeContext}.
 	 */
@@ -403,8 +463,16 @@ public class RMQSourceTest {
 			super(connectionConfig, QUEUE_NAME, true, deserializationSchema);
 		}
 
+		public RMQMockedRuntimeTestSource(RMQConnectionConfig connectionConfig, RMQDeliveryParser<String> deliveryParser) {
+			super(connectionConfig, QUEUE_NAME, true, deliveryParser);
+		}
+
 		public RMQMockedRuntimeTestSource(DeserializationSchema<String> deserializationSchema) {
 			this(CONNECTION_CONFIG, deserializationSchema);
+		}
+
+		public RMQMockedRuntimeTestSource(RMQDeliveryParser<String> deliveryParser){
+			this(CONNECTION_CONFIG, deliveryParser);
 		}
 
 		public RMQMockedRuntimeTestSource(RMQConnectionConfig connectionConfig) {
@@ -420,12 +488,20 @@ public class RMQSourceTest {
 	private class RMQTestSource extends RMQMockedRuntimeTestSource {
 		private ArrayDeque<Tuple2<Long, Set<String>>> restoredState;
 
+		private QueueingConsumer.Delivery mockedDelivery;
+		public Envelope mockedAMQPEnvelope;
+		public AMQP.BasicProperties mockedAMQPProperties;
+
 		public RMQTestSource() {
 			this(new StringDeserializationScheme());
 		}
 
 		public RMQTestSource(DeserializationSchema<String> deserializationSchema) {
 			super(deserializationSchema);
+		}
+
+		public RMQTestSource(RMQDeliveryParser deliveryParser) {
+			super(deliveryParser);
 		}
 
 		@Override
@@ -438,10 +514,7 @@ public class RMQSourceTest {
 			return this.restoredState;
 		}
 
-		@Override
-		public void open(Configuration config) throws Exception {
-			super.open(config);
-
+		public void initAMQPMocks() {
 			consumer = Mockito.mock(QueueingConsumer.class);
 
 			// Mock for delivery
@@ -455,10 +528,10 @@ public class RMQSourceTest {
 			}
 
 			// Mock for envelope
-			Envelope envelope = Mockito.mock(Envelope.class);
-			Mockito.when(deliveryMock.getEnvelope()).thenReturn(envelope);
+			mockedAMQPEnvelope = Mockito.mock(Envelope.class);
+			Mockito.when(deliveryMock.getEnvelope()).thenReturn(mockedAMQPEnvelope);
 
-			Mockito.when(envelope.getDeliveryTag()).thenAnswer(new Answer<Long>() {
+			Mockito.when(mockedAMQPEnvelope.getDeliveryTag()).thenAnswer(new Answer<Long>() {
 				@Override
 				public Long answer(InvocationOnMock invocation) throws Throwable {
 					return ++messageId;
@@ -466,16 +539,28 @@ public class RMQSourceTest {
 			});
 
 			// Mock for properties
-			AMQP.BasicProperties props = Mockito.mock(AMQP.BasicProperties.class);
-			Mockito.when(deliveryMock.getProperties()).thenReturn(props);
+			mockedAMQPProperties = Mockito.mock(AMQP.BasicProperties.class);
+			Mockito.when(deliveryMock.getProperties()).thenReturn(mockedAMQPProperties);
 
-			Mockito.when(props.getCorrelationId()).thenAnswer(new Answer<String>() {
+			Mockito.when(mockedAMQPProperties.getCorrelationId()).thenAnswer(new Answer<String>() {
 				@Override
 				public String answer(InvocationOnMock invocation) throws Throwable {
 					return generateCorrelationIds ? "" + messageId : null;
 				}
 			});
 
+			Mockito.when(mockedAMQPProperties.getMessageId()).thenAnswer(new Answer<String>(){
+				@Override
+				public String answer(InvocationOnMock invocation) throws Throwable {
+					return ++messageId + "-MESSAGE_ID";
+				}
+			});
+		}
+
+		@Override
+		public void open(Configuration config) throws Exception {
+			super.open(config);
+			initAMQPMocks();
 		}
 
 		@Override
