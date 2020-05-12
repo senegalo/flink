@@ -326,14 +326,18 @@ public class RMQSourceTest {
 	public void testExtractCorrelationId() throws Exception {
 		RMQTestSource sourceDeserializer = new RMQTestSource();
 		sourceDeserializer.initAMQPMocks();
-		String correlationID = sourceDeserializer.extractCorrelationID(
+		String result = sourceDeserializer.parseBody(
 			sourceDeserializer.mockedAMQPEnvelope, sourceDeserializer.mockedAMQPProperties, "".getBytes());
+
+		String correlationID = sourceDeserializer.extractCorrelationID(
+			sourceDeserializer.mockedAMQPEnvelope, sourceDeserializer.mockedAMQPProperties, result);
 		assertEquals("0", correlationID);
 
 		RMQTestSource sourceParser = new RMQTestSource(new CustomDeliveryParser());
 		sourceParser.initAMQPMocks();
 		correlationID = sourceParser.extractCorrelationID(
-			sourceParser.mockedAMQPEnvelope, sourceParser.mockedAMQPProperties, "".getBytes());
+			sourceParser.mockedAMQPEnvelope, sourceParser.mockedAMQPProperties, result);
+
 		assertEquals("1-MESSAGE_ID", correlationID);
 	}
 
@@ -432,7 +436,7 @@ public class RMQSourceTest {
 		}
 
 		@Override
-		public String getCorrelationID(Envelope envelope, AMQP.BasicProperties properties, byte[] body) {
+		public String getCorrelationID(Envelope envelope, AMQP.BasicProperties properties, String body) {
 			return properties.getMessageId();
 		}
 

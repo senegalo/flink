@@ -282,7 +282,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * it uses the {@link AMQP.BasicProperties#getCorrelationId()} to retrieve the correlationID.
 	 *
 	 * <p>If any of the constructors with the {@link RMQDeliveryParser } class was used to construct the source it uses the
-	 * {@link RMQDeliveryParser#getCorrelationID(Envelope, AMQP.BasicProperties, byte[])} to retrieve the correlationID.
+	 * {@link RMQDeliveryParser#getCorrelationID(Envelope, AMQP.BasicProperties, OUT)} to retrieve the correlationID.
 	 *
 	 * @param envelope
 	 * @param properties
@@ -290,7 +290,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * @return String
 	 * @throws IOException
 	 */
-	protected String extractCorrelationID(Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
+	protected String extractCorrelationID(Envelope envelope, AMQP.BasicProperties properties, OUT body) throws IOException {
 		if (deliveryParser != null){
 			return deliveryParser.getCorrelationID(envelope, properties, body);
 		} else {
@@ -318,7 +318,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 				if (!autoAck) {
 					final long deliveryTag = delivery.getEnvelope().getDeliveryTag();
 					if (usesCorrelationId) {
-						final String correlationId = extractCorrelationID(envelope, properties, body);
+						final String correlationId = extractCorrelationID(envelope, properties, result);
 						Preconditions.checkNotNull(correlationId, "RabbitMQ source was instantiated " +
 							"with usesCorrelationId set to true yet we couldn't extract the correlation id from it !");
 						if (!addId(correlationId)) {

@@ -42,12 +42,12 @@ public interface RMQDeliveryParser<T> extends Serializable, ResultTypeQueryable<
 	public T parse(Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException;
 
 	/**
-	 * A method that extracts a unique correlation id from the RabbitMQ delivery information. This ID is used for
-	 * deduplicating the messages in the RMQSource.
+	 * A method that extracts a unique correlation id from the RabbitMQ delivery information and the already parsed body
+	 * from the method above. This ID is used for deduplicating the messages in the RMQSource.
 	 * @param envelope
 	 * @param properties
 	 * @param body
 	 * @return
 	 */
-	public String getCorrelationID(Envelope envelope, AMQP.BasicProperties properties, byte[] body);
+	public String getCorrelationID(Envelope envelope, AMQP.BasicProperties properties, T body);
 }
