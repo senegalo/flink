@@ -164,7 +164,8 @@ class SubtaskCheckpointCoordinatorImpl implements SubtaskCheckpointCoordinator {
 			takeSnapshotSync(snapshotFutures, metadata, metrics, options, operatorChain, isCanceled);
 			finishAndReportAsync(snapshotFutures, metadata, metrics, options);
 		} catch (Exception ex) {
-			cleanup(snapshotFutures, metadata, metrics, options, ex);
+			cleanup(snapshotFutures, metadata, metrics, ex);
+			throw ex;
 		}
 	}
 
@@ -179,16 +180,16 @@ class SubtaskCheckpointCoordinatorImpl implements SubtaskCheckpointCoordinator {
 		} else {
 			LOG.debug("Ignoring notification of complete checkpoint for not-running task {}", taskName);
 		}
-		channelStateWriter.notifyCheckpointComplete(checkpointId);
 		env.getTaskStateManager().notifyCheckpointComplete(checkpointId);
 	}
 
 	private void cleanup(
 			Map<OperatorID, OperatorSnapshotFutures> operatorSnapshotsInProgress,
 			CheckpointMetaData metadata,
-			CheckpointMetrics metrics, CheckpointOptions options,
-			Exception ex) throws Exception {
+			CheckpointMetrics metrics,
+			Exception ex) {
 
+		channelStateWriter.abort(metadata.getCheckpointId(), ex);
 		for (OperatorSnapshotFutures operatorSnapshotResult : operatorSnapshotsInProgress.values()) {
 			if (operatorSnapshotResult != null) {
 				try {
@@ -205,16 +206,6 @@ class SubtaskCheckpointCoordinatorImpl implements SubtaskCheckpointCoordinator {
 				taskName, metadata.getCheckpointId(),
 				metrics.getAlignmentDurationNanos() / 1_000_000,
 				metrics.getSyncDurationMillis());
-		}
-
-		if (options.getCheckpointType().isSynchronous()) {
-			// in the case of a synchronous checkpoint, we always rethrow the exception,
-			// so that the task fails.
-			// this is because the intention is always to stop the job after this checkpointing
-			// operation, and without the failure, the task would go back to normal execution.
-			throw ex;
-		} else {
-			env.declineCheckpoint(metadata.getCheckpointId(), ex);
 		}
 	}
 
@@ -241,8 +232,9 @@ class SubtaskCheckpointCoordinatorImpl implements SubtaskCheckpointCoordinator {
 		if (unalignedCheckpointEnabled && !options.getCheckpointType().isSavepoint()) {
 			ChannelStateWriteResult writeResult = channelStateWriter.getWriteResult(metadata.getCheckpointId());
 			channelWrittenFuture = CompletableFuture.allOf(
-				writeResult.getInputChannelStateHandles(),
-				writeResult.getResultSubpartitionStateHandles());
+					writeResult.getInputChannelStateHandles(),
+					writeResult.getResultSubpartitionStateHandles())
+				.whenComplete((dummy, ex) -> channelStateWriter.stop(metadata.getCheckpointId()));
 		} else {
 			channelWrittenFuture = FutureUtils.completedVoidFuture();
 		}
