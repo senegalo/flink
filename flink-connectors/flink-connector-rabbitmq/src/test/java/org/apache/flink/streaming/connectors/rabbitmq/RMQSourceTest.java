@@ -219,7 +219,7 @@ public class RMQSourceTest {
 
 			assertEquals(numIds, messageIds.size());
 			if (messageIds.size() > 0) {
-				assertTrue(messageIds.contains(Long.toString(lastSnapshotId)));
+				assertTrue(messageIds.contains(Long.toString(lastSnapshotId - 1)));
 			}
 
 			// check if the messages are being acknowledged and the transaction committed
@@ -340,7 +340,7 @@ public class RMQSourceTest {
 		sourceParser.open(config);
 		message = sourceParser.processMessage(sourceDeserializer.mockedDelivery);
 		assertEquals("I Love Turtles", message.getMessages().get(0));
-		assertEquals("1-MESSAGE_ID", message.getCorrelationID());
+		assertEquals("0-MESSAGE_ID", message.getCorrelationID());
 	}
 
 	@Test
@@ -533,7 +533,7 @@ public class RMQSourceTest {
 			Mockito.when(mockedAMQPProperties.getMessageId()).thenAnswer(new Answer<String>(){
 				@Override
 				public String answer(InvocationOnMock invocation) throws Throwable {
-					return ++messageId + "-MESSAGE_ID";
+					return messageId + "-MESSAGE_ID";
 				}
 			});
 		}
