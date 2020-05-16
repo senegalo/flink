@@ -39,7 +39,7 @@ echo "Build for commit ${TRAVIS_COMMIT} of ${TRAVIS_REPO_SLUG} [build ID: ${TRAV
 # =============================================================================
 
 # Number of seconds w/o output before printing a stack trace and killing $MVN
-MAX_NO_OUTPUT=${1:-300}
+MAX_NO_OUTPUT=${1:-600}
 
 # Number of seconds to sleep before checking the output again
 SLEEP_TIME=20
@@ -222,7 +222,8 @@ watchdog () {
 
 			print_stacktraces | tee $TRACE_OUT
 
-			kill $(<$CMD_PID)
+			# Kill $CMD and all descendants
+			pkill -P $(<$CMD_PID)
 
 			exit 1
 		fi

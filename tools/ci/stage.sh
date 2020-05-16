@@ -83,11 +83,11 @@ flink-formats/flink-json,\
 flink-formats/flink-csv,\
 flink-formats/flink-orc,\
 flink-formats/flink-orc-nohive,\
-flink-connectors/flink-hbase,\
+flink-connectors/flink-connector-hbase,\
 flink-connectors/flink-hcatalog,\
 flink-connectors/flink-hadoop-compatibility,\
-flink-connectors/flink-jdbc,\
 flink-connectors,\
+flink-connectors/flink-connector-jdbc,\
 flink-connectors/flink-connector-cassandra,\
 flink-connectors/flink-connector-elasticsearch5,\
 flink-connectors/flink-connector-elasticsearch6,\

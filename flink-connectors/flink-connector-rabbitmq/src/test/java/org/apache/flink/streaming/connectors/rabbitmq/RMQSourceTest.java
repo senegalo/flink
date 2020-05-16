@@ -52,6 +52,8 @@ import org.powermock.modules.junit4.PowerMockRunner;
 
 import java.io.IOException;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.TimeoutException;
@@ -317,49 +319,28 @@ public class RMQSourceTest {
 	}
 
 	/**
-	 * Tests getting the correct correlation ID given which constructor was called.
-	 * if the constructor with the DeserializationSchema was called it uses the mocked AMQP property correlationID.
-	 * if the constructor with the RMQDeliveryParser was called it uses it's getCorrelationID which retrieves the mocked
-	 * AMQP property messageId.
+	 * Tests getting the correct body and correlationID given which constructor was called.
+	 * if the constructor with the {@link DeserializationSchema} was called it should extract the body of the message
+	 * from the {@link QueueingConsumer.Delivery} and the correlation ID from the {@link AMQP.BasicProperties} which are
+	 * mocked to "I Love Turtles" and "0".
+	 * if the constructor with the {@link RMQDeserializationSchema} was called it uses the
+	 * {@link RMQDeserializationSchema#processMessage} method to parse the message and extract the correlation ID which
+	 * both are implemented in {@link RMQTestSource#initAMQPMocks()} to return the
+	 * {@link AMQP.BasicProperties#getMessageId()} that is mocked to return "1-MESSAGE_ID"
 	 */
 	@Test
-	public void testExtractCorrelationId() throws Exception {
-		RMQTestSource sourceDeserializer = new RMQTestSource();
-		sourceDeserializer.initAMQPMocks();
-		String result = sourceDeserializer.parseBody(
-			sourceDeserializer.mockedAMQPEnvelope, sourceDeserializer.mockedAMQPProperties, "".getBytes());
-
-		String correlationID = sourceDeserializer.extractCorrelationID(
-			sourceDeserializer.mockedAMQPEnvelope, sourceDeserializer.mockedAMQPProperties, result);
-		assertEquals("0", correlationID);
-
-		RMQTestSource sourceParser = new RMQTestSource(new CustomDeliveryParser());
-		sourceParser.initAMQPMocks();
-		correlationID = sourceParser.extractCorrelationID(
-			sourceParser.mockedAMQPEnvelope, sourceParser.mockedAMQPProperties, result);
-
-		assertEquals("1-MESSAGE_ID", correlationID);
-	}
-
-	/**
-	 * Tests getting the correct body given which constructor was called.
-	 * if the constructor with the DeserilizationSchema was called it uses it parse the AMQP body.
-	 * if the constructor with the RMQDeliveryParser was called it uses it's parseBody method to retrieve the mocked AMQP
-	 * property messageID
-	 */
-	@Test
-	public void testParseBody() throws Exception {
+	public void testProcessMessage() throws Exception {
 		RMQTestSource sourceDeserializer = new RMQTestSource();
 		sourceDeserializer.open(config);
-		String correlationID = sourceDeserializer.parseBody(
-			sourceDeserializer.mockedAMQPEnvelope, sourceDeserializer.mockedAMQPProperties, "I Love Turtles".getBytes());
-		assertEquals("I Love Turtles", correlationID);
+		RMQDeserializedMessage message = sourceDeserializer.processMessage(sourceDeserializer.mockedDelivery);
+		assertEquals("test", message.getMessages().get(0));
+		assertEquals("0", message.getCorrelationID());
 
-		RMQTestSource sourceParser = new RMQTestSource(new CustomDeliveryParser());
+		RMQTestSource sourceParser = new RMQTestSource(new CustomDeserializationSchema());
 		sourceParser.open(config);
-		correlationID = sourceParser.parseBody(
-			sourceParser.mockedAMQPEnvelope, sourceParser.mockedAMQPProperties, "".getBytes());
-		assertEquals("1-MESSAGE_ID", correlationID);
+		message = sourceParser.processMessage(sourceDeserializer.mockedDelivery);
+		assertEquals("I Love Turtles", message.getMessages().get(0));
+		assertEquals("1-MESSAGE_ID", message.getCorrelationID());
 	}
 
 	@Test
@@ -428,21 +409,17 @@ public class RMQSourceTest {
 		}
 	}
 
-	private class CustomDeliveryParser implements RMQDeliveryParser<String> {
-
-		@Override
-		public String parse(Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
-			return properties.getMessageId();
-		}
-
-		@Override
-		public String getCorrelationID(Envelope envelope, AMQP.BasicProperties properties, String body) {
-			return properties.getMessageId();
-		}
-
+	private class CustomDeserializationSchema implements RMQDeserializationSchema<String> {
 		@Override
 		public TypeInformation<String> getProducedType() {
 			return TypeExtractor.getForClass(String.class);
+		}
+
+		@Override
+		public RMQDeserializedMessage processMessage(Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
+			List<String> messages = new ArrayList();
+			messages.add("I Love Turtles");
+			return new RMQDeserializedMessage<String>(messages, properties.getMessageId());
 		}
 	}
 
@@ -467,7 +444,7 @@ public class RMQSourceTest {
 			super(connectionConfig, QUEUE_NAME, true, deserializationSchema);
 		}
 
-		public RMQMockedRuntimeTestSource(RMQConnectionConfig connectionConfig, RMQDeliveryParser<String> deliveryParser) {
+		public RMQMockedRuntimeTestSource(RMQConnectionConfig connectionConfig, RMQDeserializationSchema<String> deliveryParser) {
 			super(connectionConfig, QUEUE_NAME, true, deliveryParser);
 		}
 
@@ -475,7 +452,7 @@ public class RMQSourceTest {
 			this(CONNECTION_CONFIG, deserializationSchema);
 		}
 
-		public RMQMockedRuntimeTestSource(RMQDeliveryParser<String> deliveryParser){
+		public RMQMockedRuntimeTestSource(RMQDeserializationSchema<String> deliveryParser){
 			this(CONNECTION_CONFIG, deliveryParser);
 		}
 
@@ -504,7 +481,7 @@ public class RMQSourceTest {
 			super(deserializationSchema);
 		}
 
-		public RMQTestSource(RMQDeliveryParser deliveryParser) {
+		public RMQTestSource(RMQDeserializationSchema deliveryParser) {
 			super(deliveryParser);
 		}
 
@@ -522,18 +499,18 @@ public class RMQSourceTest {
 			consumer = Mockito.mock(QueueingConsumer.class);
 
 			// Mock for delivery
-			final QueueingConsumer.Delivery deliveryMock = Mockito.mock(QueueingConsumer.Delivery.class);
-			Mockito.when(deliveryMock.getBody()).thenReturn("test".getBytes(ConfigConstants.DEFAULT_CHARSET));
+			mockedDelivery = Mockito.mock(QueueingConsumer.Delivery.class);
+			Mockito.when(mockedDelivery.getBody()).thenReturn("test".getBytes(ConfigConstants.DEFAULT_CHARSET));
 
 			try {
-				Mockito.when(consumer.nextDelivery()).thenReturn(deliveryMock);
+				Mockito.when(consumer.nextDelivery()).thenReturn(mockedDelivery);
 			} catch (InterruptedException e) {
 				fail("Couldn't setup up deliveryMock");
 			}
 
 			// Mock for envelope
 			mockedAMQPEnvelope = Mockito.mock(Envelope.class);
-			Mockito.when(deliveryMock.getEnvelope()).thenReturn(mockedAMQPEnvelope);
+			Mockito.when(mockedDelivery.getEnvelope()).thenReturn(mockedAMQPEnvelope);
 
 			Mockito.when(mockedAMQPEnvelope.getDeliveryTag()).thenAnswer(new Answer<Long>() {
 				@Override
@@ -544,7 +521,7 @@ public class RMQSourceTest {
 
 			// Mock for properties
 			mockedAMQPProperties = Mockito.mock(AMQP.BasicProperties.class);
-			Mockito.when(deliveryMock.getProperties()).thenReturn(mockedAMQPProperties);
+			Mockito.when(mockedDelivery.getProperties()).thenReturn(mockedAMQPProperties);
 
 			Mockito.when(mockedAMQPProperties.getCorrelationId()).thenAnswer(new Answer<String>() {
 				@Override

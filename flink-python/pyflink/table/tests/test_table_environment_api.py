@@ -56,7 +56,7 @@ class TableEnvironmentTest(object):
         t = t_env.from_elements([], schema)
         result = t.select("1 + a, b, c")
 
-        actual = t_env.explain(result)
+        actual = result.explain()
 
         assert isinstance(actual, str)
 
@@ -69,7 +69,7 @@ class TableEnvironmentTest(object):
         t = t_env.from_elements([], schema)
         result = t.select("1 + a, b, c")
 
-        actual = t_env.explain(result, True)
+        actual = result.explain(ExplainDetail.ESTIMATED_COST, ExplainDetail.CHANGELOG_MODE)
 
         assert isinstance(actual, str)
 
@@ -224,6 +224,26 @@ class StreamTableEnvironmentTests(TableEnvironmentTest, PyFlinkStreamTableTestCa
         expected = ['1,Hi,Hello']
         self.assert_equals(actual, expected)
 
+    def test_statement_set(self):
+        t_env = self.t_env
+        source = t_env.from_elements([(1, "Hi", "Hello"), (2, "Hello", "Hello")], ["a", "b", "c"])
+        field_names = ["a", "b", "c"]
+        field_types = [DataTypes.BIGINT(), DataTypes.STRING(), DataTypes.STRING()]
+        t_env.register_table_sink(
+            "sink1",
+            source_sink_utils.TestAppendSink(field_names, field_types))
+        t_env.register_table_sink(
+            "sink2",
+            source_sink_utils.TestAppendSink(field_names, field_types))
+
+        stmt_set = t_env.create_statement_set()
+
+        stmt_set.add_insert_sql("insert into sink1 select * from %s where a > 100" % source)\
+            .add_insert("sink2", source.filter("a < 100"), False)
+
+        actual = stmt_set.explain(ExplainDetail.CHANGELOG_MODE)
+        assert isinstance(actual, str)
+
     def test_explain_with_multi_sinks(self):
         t_env = self.t_env
         source = t_env.from_elements([(1, "Hi", "Hello"), (2, "Hello", "Hello")], ["a", "b", "c"])
@@ -236,10 +256,11 @@ class StreamTableEnvironmentTests(TableEnvironmentTest, PyFlinkStreamTableTestCa
             "sink2",
             source_sink_utils.TestAppendSink(field_names, field_types))
 
-        t_env.sql_update("insert into sink1 select * from %s where a > 100" % source)
-        t_env.sql_update("insert into sink2 select * from %s where a < 100" % source)
+        stmt_set = t_env.create_statement_set()
+        stmt_set.add_insert_sql("insert into sink1 select * from %s where a > 100" % source)
+        stmt_set.add_insert_sql("insert into sink2 select * from %s where a < 100" % source)
 
-        actual = t_env.explain(extended=True)
+        actual = stmt_set.explain(ExplainDetail.ESTIMATED_COST, ExplainDetail.CHANGELOG_MODE)
         assert isinstance(actual, str)
 
     def test_explain_sql_without_explain_detail(self):
@@ -424,11 +445,32 @@ class BatchTableEnvironmentTests(TableEnvironmentTest, PyFlinkBatchTableTestCase
             "sink2",
             CsvTableSink(field_names, field_types, "path2"))
 
-        t_env.sql_update("insert into sink1 select * from %s where a > 100" % source)
-        t_env.sql_update("insert into sink2 select * from %s where a < 100" % source)
+        stmt_set = t_env.create_statement_set()
+        stmt_set.add_insert_sql("insert into sink1 select * from %s where a > 100" % source)
+        stmt_set.add_insert_sql("insert into sink2 select * from %s where a < 100" % source)
 
-        actual = t_env.explain(extended=True)
+        actual = stmt_set.explain(ExplainDetail.ESTIMATED_COST, ExplainDetail.CHANGELOG_MODE)
 
+        assert isinstance(actual, str)
+
+    def test_statement_set(self):
+        t_env = self.t_env
+        source = t_env.from_elements([(1, "Hi", "Hello"), (2, "Hello", "Hello")], ["a", "b", "c"])
+        field_names = ["a", "b", "c"]
+        field_types = [DataTypes.BIGINT(), DataTypes.STRING(), DataTypes.STRING()]
+        t_env.register_table_sink(
+            "sink1",
+            CsvTableSink(field_names, field_types, "path1"))
+        t_env.register_table_sink(
+            "sink2",
+            CsvTableSink(field_names, field_types, "path2"))
+
+        stmt_set = t_env.create_statement_set()
+
+        stmt_set.add_insert_sql("insert into sink1 select * from %s where a > 100" % source)\
+            .add_insert("sink2", source.filter("a < 100"))
+
+        actual = stmt_set.explain()
         assert isinstance(actual, str)
 
     def test_create_table_environment(self):
@@ -508,10 +550,11 @@ class BlinkBatchTableEnvironmentTests(PyFlinkBlinkBatchTableTestCase):
             "sink2",
             CsvTableSink(field_names, field_types, "path2"))
 
-        t_env.sql_update("insert into sink1 select * from %s where a > 100" % source)
-        t_env.sql_update("insert into sink2 select * from %s where a < 100" % source)
+        stmt_set = t_env.create_statement_set()
+        stmt_set.add_insert_sql("insert into sink1 select * from %s where a > 100" % source)
+        stmt_set.add_insert_sql("insert into sink2 select * from %s where a < 100" % source)
 
-        actual = t_env.explain(extended=True)
+        actual = stmt_set.explain(ExplainDetail.ESTIMATED_COST, ExplainDetail.CHANGELOG_MODE)
         self.assertIsInstance(actual, str)
 
     def test_register_java_function(self):

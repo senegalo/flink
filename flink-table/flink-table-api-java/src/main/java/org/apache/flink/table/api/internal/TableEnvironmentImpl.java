@@ -30,6 +30,7 @@ import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.ExplainDetail;
 import org.apache.flink.table.api.ResultKind;
 import org.apache.flink.table.api.SqlParserException;
+import org.apache.flink.table.api.StatementSet;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.TableConfig;
 import org.apache.flink.table.api.TableEnvironment;
@@ -37,6 +38,7 @@ import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.TableSchema;
 import org.apache.flink.table.api.ValidationException;
+import org.apache.flink.table.api.WatermarkSpec;
 import org.apache.flink.table.catalog.Catalog;
 import org.apache.flink.table.catalog.CatalogBaseTable;
 import org.apache.flink.table.catalog.CatalogFunction;
@@ -75,6 +77,7 @@ import org.apache.flink.table.module.Module;
 import org.apache.flink.table.module.ModuleManager;
 import org.apache.flink.table.operations.CatalogQueryOperation;
 import org.apache.flink.table.operations.CatalogSinkModifyOperation;
+import org.apache.flink.table.operations.DescribeTableOperation;
 import org.apache.flink.table.operations.ExplainOperation;
 import org.apache.flink.table.operations.ModifyOperation;
 import org.apache.flink.table.operations.Operation;
@@ -85,6 +88,7 @@ import org.apache.flink.table.operations.ShowFunctionsOperation;
 import org.apache.flink.table.operations.ShowTablesOperation;
 import org.apache.flink.table.operations.ShowViewsOperation;
 import org.apache.flink.table.operations.TableSourceQueryOperation;
+import org.apache.flink.table.operations.UnregisteredSinkModifyOperation;
 import org.apache.flink.table.operations.UseCatalogOperation;
 import org.apache.flink.table.operations.UseDatabaseOperation;
 import org.apache.flink.table.operations.ddl.AlterCatalogFunctionOperation;
@@ -110,12 +114,17 @@ import org.apache.flink.table.sinks.TableSink;
 import org.apache.flink.table.sources.TableSource;
 import org.apache.flink.table.sources.TableSourceValidation;
 import org.apache.flink.table.types.DataType;
+import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.utils.PrintUtils;
 import org.apache.flink.table.utils.TableSchemaUtils;
 import org.apache.flink.types.Row;
+
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -153,7 +162,7 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
 			"CREATE TABLE, DROP TABLE, ALTER TABLE, CREATE DATABASE, DROP DATABASE, ALTER DATABASE, " +
 			"CREATE FUNCTION, DROP FUNCTION, ALTER FUNCTION, CREATE CATALOG, USE CATALOG, USE [CATALOG.]DATABASE, " +
 			"SHOW CATALOGS, SHOW DATABASES, SHOW TABLES, SHOW FUNCTIONS, CREATE VIEW, DROP VIEW, SHOW VIEWS, " +
-			"INSERT.";
+			"INSERT, DESCRIBE.";
 
 	/**
 	 * Provides necessary methods for {@link ConnectTableDescriptor}.
@@ -660,12 +669,61 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
 	}
 
 	@Override
-	public TableResult executeInternal(List<ModifyOperation> operations) {
-		if (operations.size() != 1) {
-			throw new TableException("Only one ModifyOperation is supported now.");
-		}
+	public StatementSet createStatementSet() {
+		return new StatementSetImpl(this);
+	}
 
-		return executeOperation(operations.get(0));
+	@Override
+	public TableResult executeInternal(List<ModifyOperation> operations) {
+		List<Transformation<?>> transformations = translate(operations);
+		List<String> sinkIdentifierNames = extractSinkIdentifierNames(operations);
+		String jobName = "insert-into_" + String.join(",", sinkIdentifierNames);
+		Pipeline pipeline = execEnv.createPipeline(transformations, tableConfig, jobName);
+		try {
+			JobClient jobClient = execEnv.executeAsync(pipeline);
+			TableSchema.Builder builder = TableSchema.builder();
+			Object[] affectedRowCounts = new Long[operations.size()];
+			for (int i = 0; i < operations.size(); ++i) {
+				// use sink identifier name as field name
+				builder.field(sinkIdentifierNames.get(i), DataTypes.BIGINT());
+				affectedRowCounts[i] = -1L;
+			}
+
+			return TableResultImpl.builder()
+					.jobClient(jobClient)
+					.resultKind(ResultKind.SUCCESS_WITH_CONTENT)
+					.tableSchema(builder.build())
+					.data(Collections.singletonList(Row.of(affectedRowCounts)))
+					.build();
+		} catch (Exception e) {
+			throw new TableException("Failed to execute sql", e);
+		}
+	}
+
+	@Override
+	public TableResult executeInternal(QueryOperation operation) {
+		TableSchema tableSchema = operation.getTableSchema();
+		SelectTableSink tableSink = planner.createSelectTableSink(tableSchema);
+		UnregisteredSinkModifyOperation<Row> sinkOperation = new UnregisteredSinkModifyOperation<>(
+				tableSink,
+				operation
+		);
+		List<Transformation<?>> transformations = translate(Collections.singletonList(sinkOperation));
+		Pipeline pipeline = execEnv.createPipeline(transformations, tableConfig, "collect");
+		try {
+			JobClient jobClient = execEnv.executeAsync(pipeline);
+			tableSink.setJobClient(jobClient);
+			return TableResultImpl.builder()
+					.jobClient(jobClient)
+					.resultKind(ResultKind.SUCCESS_WITH_CONTENT)
+					.tableSchema(tableSchema)
+					.data(tableSink.getResultIterator())
+					.setPrintStyle(TableResultImpl.PrintStyle.tableau(
+							PrintUtils.MAX_COLUMN_WIDTH, PrintUtils.NULL_COLUMN))
+					.build();
+		} catch (Exception e) {
+			throw new TableException("Failed to execute sql", e);
+		}
 	}
 
 	@Override
@@ -703,20 +761,7 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
 
 	private TableResult executeOperation(Operation operation) {
 		if (operation instanceof ModifyOperation) {
-			List<Transformation<?>> transformations = translate(Collections.singletonList((ModifyOperation) operation));
-			String jobName = extractJobName(operation);
-			Pipeline pipeline = execEnv.createPipeline(transformations, tableConfig, jobName);
-			try {
-				JobClient jobClient = execEnv.executeAsync(pipeline);
-				return TableResultImpl.builder()
-						.jobClient(jobClient)
-						.resultKind(ResultKind.SUCCESS_WITH_CONTENT)
-						.tableSchema(TableSchema.builder().field("affected_rowcount", DataTypes.BIGINT()).build())
-						.data(Collections.singletonList(Row.of(-1L)))
-						.build();
-			} catch (Exception e) {
-				throw new TableException("Failed to execute sql", e);
-			}
+			return executeInternal(Collections.singletonList((ModifyOperation) operation));
 		} else if (operation instanceof CreateTableOperation) {
 			CreateTableOperation createTableOperation = (CreateTableOperation) operation;
 			if (createTableOperation.isTemporary()) {
@@ -754,7 +799,7 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
 							alterTableRenameOp.getTableIdentifier().toObjectPath(),
 							alterTableRenameOp.getNewTableIdentifier().getObjectName(),
 							false);
-				} else if (alterTableOperation instanceof AlterTablePropertiesOperation){
+				} else if (alterTableOperation instanceof AlterTablePropertiesOperation) {
 					AlterTablePropertiesOperation alterTablePropertiesOp = (AlterTablePropertiesOperation) operation;
 					catalog.alterTable(
 							alterTablePropertiesOp.getTableIdentifier().toObjectPath(),
@@ -926,30 +971,107 @@ public class TableEnvironmentImpl implements TableEnvironmentInternal {
 					.resultKind(ResultKind.SUCCESS_WITH_CONTENT)
 					.tableSchema(TableSchema.builder().field("result", DataTypes.STRING()).build())
 					.data(Collections.singletonList(Row.of(explanation)))
-					.setPrintStyle(TableResultImpl.PrintStyle.RAW_CONTENT)
+					.setPrintStyle(TableResultImpl.PrintStyle.rawContent())
 					.build();
-
+		} else if (operation instanceof DescribeTableOperation) {
+			DescribeTableOperation describeTableOperation = (DescribeTableOperation) operation;
+			Optional<CatalogManager.TableLookupResult> result =
+					catalogManager.getTable(describeTableOperation.getSqlIdentifier());
+			if (result.isPresent()) {
+				return buildDescribeResult(result.get().getTable().getSchema());
+			} else {
+				throw new ValidationException(String.format(
+						"Tables or views with the identifier '%s' doesn't exist",
+						describeTableOperation.getSqlIdentifier().asSummaryString()));
+			}
+		} else if (operation instanceof QueryOperation) {
+			return executeInternal((QueryOperation) operation);
 		} else {
 			throw new TableException(UNSUPPORTED_QUERY_IN_EXECUTE_SQL_MSG);
 		}
 	}
 
 	private TableResult buildShowResult(String[] objects) {
+		return buildResult(
+			new String[]{"result"},
+			new DataType[]{DataTypes.STRING()},
+			Arrays.stream(objects).map((c) -> new String[]{c}).toArray(String[][]::new));
+	}
+
+	private TableResult buildDescribeResult(TableSchema schema) {
+		Map<String, String> fieldToWatermark =
+				schema.getWatermarkSpecs()
+						.stream()
+						.collect(Collectors.toMap(WatermarkSpec::getRowtimeAttribute, WatermarkSpec::getWatermarkExpr));
+
+		Map<String, String> fieldToPrimaryKey = new HashMap<>();
+		schema.getPrimaryKey().ifPresent((p) -> {
+			List<String> columns = p.getColumns();
+			columns.forEach((c) -> fieldToPrimaryKey.put(c, String.format("PRI(%s)", String.join(", ", columns))));
+		});
+
+		Object[][] rows =
+			schema.getTableColumns()
+				.stream()
+				.map((c) -> {
+					LogicalType logicalType = c.getType().getLogicalType();
+					return new Object[]{
+						c.getName(),
+						StringUtils.removeEnd(logicalType.toString(), " NOT NULL"),
+						logicalType.isNullable(),
+						fieldToPrimaryKey.getOrDefault(c.getName(), null),
+						c.getExpr().orElse(null),
+						fieldToWatermark.getOrDefault(c.getName(), null)};
+				}).toArray(Object[][]::new);
+
+		return buildResult(
+			new String[]{"name", "type", "null", "key", "computed column", "watermark"},
+			new DataType[]{DataTypes.STRING(), DataTypes.STRING(), DataTypes.BOOLEAN(), DataTypes.STRING(), DataTypes.STRING(), DataTypes.STRING()},
+			rows);
+	}
+
+	private TableResult buildResult(String[] headers, DataType[] types, Object[][] rows) {
 		return TableResultImpl.builder()
 				.resultKind(ResultKind.SUCCESS_WITH_CONTENT)
-				.tableSchema(TableSchema.builder().field("result", DataTypes.STRING()).build())
-				.data(Arrays.stream(objects).map(Row::of).collect(Collectors.toList()))
+				.tableSchema(
+					TableSchema.builder().fields(
+						headers,
+						types).build())
+				.data(Arrays.stream(rows).map(Row::of).collect(Collectors.toList()))
+				.setPrintStyle(TableResultImpl.PrintStyle.tableau(Integer.MAX_VALUE, ""))
 				.build();
 	}
 
-	private String extractJobName(Operation operation) {
-		String tableName;
-		if (operation instanceof CatalogSinkModifyOperation) {
-			tableName = ((CatalogSinkModifyOperation) operation).getTableIdentifier().toString();
-		} else {
-			throw new UnsupportedOperationException("Unsupported operation: " + operation);
+	/**
+	 * extract sink identifier names from {@link ModifyOperation}s.
+	 *
+	 * <p>If there are multiple ModifyOperations have same name,
+	 * an index suffix will be added at the end of the name to ensure each name is unique.
+	 */
+	private List<String> extractSinkIdentifierNames(List<ModifyOperation> operations) {
+		List<String> tableNames = new ArrayList<>(operations.size());
+		Map<String, Integer> tableNameToCount = new HashMap<>();
+		for (ModifyOperation operation : operations) {
+			if (operation instanceof CatalogSinkModifyOperation) {
+				ObjectIdentifier identifier = ((CatalogSinkModifyOperation) operation).getTableIdentifier();
+				String fullName = identifier.asSummaryString();
+				tableNames.add(fullName);
+				tableNameToCount.put(fullName, tableNameToCount.getOrDefault(fullName, 0) + 1);
+			} else {
+				throw new UnsupportedOperationException("Unsupported operation: " + operation);
+			}
 		}
-		return "insert_into_" + tableName;
+		Map<String, Integer> tableNameToIndex = new HashMap<>();
+		return tableNames.stream().map(tableName -> {
+					if (tableNameToCount.get(tableName) == 1) {
+						return tableName;
+					} else {
+						Integer index = tableNameToIndex.getOrDefault(tableName, 0) + 1;
+						tableNameToIndex.put(tableName, index);
+						return tableName + "_" + index;
+					}
+				}
+		).collect(Collectors.toList());
 	}
 
 	/** Get catalog from catalogName or throw a ValidationException if the catalog not exists. */

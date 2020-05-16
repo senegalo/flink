@@ -28,11 +28,13 @@ from pyflink.common import JobExecutionResult
 from pyflink.serializers import BatchedSerializer, PickleSerializer
 from pyflink.table.catalog import Catalog
 from pyflink.table.serializers import ArrowSerializer
+from pyflink.table.statement_set import StatementSet
 from pyflink.table.table_config import TableConfig
 from pyflink.table.descriptors import StreamTableDescriptor, BatchTableDescriptor
 
 from pyflink.java_gateway import get_gateway
 from pyflink.table import Table
+from pyflink.table.table_result import TableResult
 from pyflink.table.types import _to_java_type, _create_type_verifier, RowType, DataType, \
     _infer_schema_from_data, _create_converter, from_arrow_type, RowField, create_arrow_schema
 from pyflink.util import utils
@@ -311,7 +313,12 @@ class TableEnvironment(object):
         .. versionchanged:: 1.10.0
             The signature is changed, e.g. the parameter *table_path_continued* was removed and
             the parameter *target_path* is moved before the parameter *table*.
+
+        .. note:: Deprecated in 1.11. Use :func:`execute_insert` for single sink,
+                  use :func:`create_statement_set` for multiple sinks.
         """
+        warnings.warn("Deprecated in 1.11. Use execute_insert for single sink,"
+                      "use create_statement_set for multiple sinks.", DeprecationWarning)
         self._j_tenv.insertInto(target_path, table._j_table)
 
     def list_catalogs(self):
@@ -463,7 +470,10 @@ class TableEnvironment(object):
         :type extended: bool
         :return: The table for which the AST and execution plan will be returned.
         :rtype: str
+
+        .. note:: Deprecated in 1.11. Use :class:`Table`#:func:`explain` instead.
         """
+        warnings.warn("Deprecated in 1.11. Use Table#explain instead.", DeprecationWarning)
         if table is None:
             return self._j_tenv.explain(extended)
         else:
@@ -522,7 +532,19 @@ class TableEnvironment(object):
                 the affected row count for `DML` (-1 means unknown),
                 or a string message ("OK") for other statements.
         """
-        return self._j_tenv.executeSql(stmt)
+        return TableResult(self._j_tenv.executeSql(stmt))
+
+    def create_statement_set(self):
+        """
+        Create a StatementSet instance which accepts DML statements or Tables,
+        the planner can optimize all added statements and Tables together
+        and then submit as one job.
+
+        :return statement_set instance
+        :rtype: pyflink.table.StatementSet
+        """
+        _j_statement_set = self._j_tenv.createStatementSet()
+        return StatementSet(_j_statement_set)
 
     def sql_update(self, stmt):
         """
@@ -594,7 +616,12 @@ class TableEnvironment(object):
 
         :param stmt: The SQL statement to evaluate.
         :type stmt: str
+
+        .. note:: Deprecated in 1.11. Use :func:`execute_sql` for single statement,
+                  use :func:`create_statement_set` for multiple DML statements.
         """
+        warnings.warn("Deprecated in 1.11. Use execute_sql for single statement, "
+                      "use create_statement_set for multiple DML statements.", DeprecationWarning)
         self._j_tenv.sqlUpdate(stmt)
 
     def get_current_catalog(self):
@@ -1008,7 +1035,12 @@ class TableEnvironment(object):
         :param job_name: Desired name of the job.
         :type job_name: str
         :return: The result of the job execution, containing elapsed time and accumulators.
+
+        .. note:: Deprecated in 1.11. Use :func:`execute_sql` for single sink,
+                  use :func:`create_statement_set` for multiple sinks.
         """
+        warnings.warn("Deprecated in 1.11. Use execute_sql for single sink, "
+                      "use create_statement_set for multiple sinks.", DeprecationWarning)
         jvm = get_gateway().jvm
         jars_key = jvm.org.apache.flink.configuration.PipelineOptions.JARS.key()
         classpaths_key = jvm.org.apache.flink.configuration.PipelineOptions.CLASSPATHS.key()

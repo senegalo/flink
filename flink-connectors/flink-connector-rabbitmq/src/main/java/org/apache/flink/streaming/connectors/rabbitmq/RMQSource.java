@@ -26,6 +26,7 @@ import org.apache.flink.streaming.api.functions.source.MessageAcknowledgingSourc
 import org.apache.flink.streaming.api.functions.source.MultipleIdsMessageAcknowledgingSourceBase;
 import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
 import org.apache.flink.streaming.connectors.rabbitmq.common.RMQConnectionConfig;
+import org.apache.flink.util.Collector;
 import org.apache.flink.util.Preconditions;
 
 import com.rabbitmq.client.AMQP;
@@ -38,6 +39,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -78,7 +80,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	private final RMQConnectionConfig rmqConnectionConfig;
 	protected final String queueName;
 	private final boolean usesCorrelationId;
-	protected RMQDeliveryParser<OUT> deliveryParser;
+	protected RMQDeserializationSchema<OUT> deliveryDeserializer;
 	protected DeserializationSchema<OUT> schema;
 
 	protected transient Connection connection;
@@ -132,16 +134,16 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * checkpointing is enabled. No strong delivery guarantees when checkpointing is disabled.
 	 *
 	 * <p>For exactly-once, please use the constructor
-	 * {@link RMQSource#RMQSource(RMQConnectionConfig, String, boolean, RMQDeliveryParser)}.
+	 * {@link RMQSource#RMQSource(RMQConnectionConfig, String, boolean, RMQDeserializationSchema)}.
 	 *
-	 * <p>It also uses the provided {@link RMQDeliveryParser} to parse both the correlationID and the message.
+	 * <p>It also uses the provided {@link RMQDeserializationSchema} to parse both the correlationID and the message.
 	 * @param rmqConnectionConfig The RabbiMQ connection configuration {@link RMQConnectionConfig}.
 	 * @param queueName  The queue to receive messages from.
-	 * @param deliveryParser A {@link RMQDeliveryParser} for parsing the RMQDelivery.
+	 * @param deliveryDeserializer A {@link RMQDeserializationSchema} for parsing the RMQDelivery.
 	 */
 	public RMQSource(RMQConnectionConfig rmqConnectionConfig, String queueName,
-					RMQDeliveryParser<OUT> deliveryParser) {
-		this(rmqConnectionConfig, queueName, false, deliveryParser);
+					RMQDeserializationSchema<OUT> deliveryDeserializer) {
+		this(rmqConnectionConfig, queueName, false, deliveryDeserializer);
 	}
 
 	/**
@@ -150,21 +152,21 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * undefined. If in doubt, set usesCorrelationId to false. When correlation ids are not
 	 * used, this source has at-least-once processing semantics when checkpointing is enabled.
 	 *
-	 * <p>It also uses the provided {@link RMQDeliveryParser} to parse both the correlationID and the message.
+	 * <p>It also uses the provided {@link RMQDeserializationSchema} to parse both the correlationID and the message.
 	 * @param rmqConnectionConfig The RabbiMQ connection configuration {@link RMQConnectionConfig}.
 	 * @param queueName The queue to receive messages from.
 	 * @param usesCorrelationId Whether the messages received are supplied with a <b>unique</b>
 	 *                          id to deduplicate messages (in case of failed acknowledgments).
 	 *                          Only used when checkpointing is enabled.
-	 * @param deliveryParser A {@link RMQDeliveryParser} for parsing the RMQDelivery.
+	 * @param deliveryDeserializer A {@link RMQDeserializationSchema} for parsing the RMQDelivery.
 	 */
 	public RMQSource(RMQConnectionConfig rmqConnectionConfig,
-					String queueName, boolean usesCorrelationId, RMQDeliveryParser<OUT> deliveryParser) {
+					String queueName, boolean usesCorrelationId, RMQDeserializationSchema<OUT> deliveryDeserializer) {
 		super(String.class);
 		this.rmqConnectionConfig = rmqConnectionConfig;
 		this.queueName = queueName;
 		this.usesCorrelationId = usesCorrelationId;
-		this.deliveryParser = deliveryParser;
+		this.deliveryDeserializer = deliveryDeserializer;
 	}
 
 	/**
@@ -258,67 +260,39 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * <p>If any of the constructors with the {@link DeserializationSchema} class was used to construct the source
 	 * it uses the {@link DeserializationSchema#deserialize(byte[])} to parse the body of the AMQP message.
 	 *
-	 * <p>If any of the constructors with the {@link RMQDeliveryParser } class was used to construct the source it uses the
-	 * {@link RMQDeliveryParser#parse(Envelope, AMQP.BasicProperties, byte[])} method of that provided instance.
+	 * <p>If any of the constructors with the {@link RMQDeserializationSchema } class was used to construct the source it uses the
+	 * {@link RMQDeserializationSchema#processMessage(Envelope, AMQP.BasicProperties, byte[])} method of that provided instance.
 	 *
-	 * @param envelope
-	 * @param properties
-	 * @param body
+	 * @param delivery the AMQP {@link QueueingConsumer.Delivery}
 	 * @return OUT
 	 * @throws IOException
 	 */
-	protected OUT parseBody(Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
-		if (deliveryParser != null){
-			return deliveryParser.parse(envelope, properties, body);
-		} else {
-			return schema.deserialize(body);
-		}
-	}
+	protected RMQDeserializedMessage processMessage(QueueingConsumer.Delivery delivery) throws IOException {
+		AMQP.BasicProperties properties = delivery.getProperties();
+		byte[] body = delivery.getBody();
 
-	/**
-	 * Extracts and returns the correlationID.
-	 *
-	 * <p>If any of the constructors with the {@link DeserializationSchema} class was used to construct the source
-	 * it uses the {@link AMQP.BasicProperties#getCorrelationId()} to retrieve the correlationID.
-	 *
-	 * <p>If any of the constructors with the {@link RMQDeliveryParser } class was used to construct the source it uses the
-	 * {@link RMQDeliveryParser#getCorrelationID(Envelope, AMQP.BasicProperties, OUT)} to retrieve the correlationID.
-	 *
-	 * @param envelope
-	 * @param properties
-	 * @param body
-	 * @return String
-	 * @throws IOException
-	 */
-	protected String extractCorrelationID(Envelope envelope, AMQP.BasicProperties properties, OUT body) throws IOException {
-		if (deliveryParser != null){
-			return deliveryParser.getCorrelationID(envelope, properties, body);
+		if (deliveryDeserializer != null){
+			Envelope envelope = delivery.getEnvelope();
+			return deliveryDeserializer.processMessage(envelope, properties, body);
 		} else {
-			return properties.getCorrelationId();
+			List<OUT> records = new ArrayList(1);
+			records.add(schema.deserialize(body));
+			return new RMQDeserializedMessage(records, properties.getCorrelationId());
 		}
 	}
 
 	@Override
 	public void run(SourceContext<OUT> ctx) throws Exception {
+		final RMQCollector collector = new RMQCollector(ctx);
 		while (running) {
 			QueueingConsumer.Delivery delivery = consumer.nextDelivery();
+			RMQDeserializedMessage parsedMessage = processMessage(delivery);
 
 			synchronized (ctx.getCheckpointLock()) {
-
-				Envelope envelope = delivery.getEnvelope();
-				AMQP.BasicProperties properties = delivery.getProperties();
-				byte[] body = delivery.getBody();
-
-				OUT result = parseBody(envelope, properties, body);
-
-				if (schema != null && schema.isEndOfStream(result)) {
-					break;
-				}
-
 				if (!autoAck) {
 					final long deliveryTag = delivery.getEnvelope().getDeliveryTag();
 					if (usesCorrelationId) {
-						final String correlationId = extractCorrelationID(envelope, properties, result);
+						final String correlationId = parsedMessage.getCorrelationID();
 						Preconditions.checkNotNull(correlationId, "RabbitMQ source was instantiated " +
 							"with usesCorrelationId set to true yet we couldn't extract the correlation id from it !");
 						if (!addId(correlationId)) {
@@ -329,8 +303,48 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 					sessionIds.add(deliveryTag);
 				}
 
-				ctx.collect(result);
+				collector.collect(parsedMessage.getMessages());
+
+				if (collector.isEndOfStreamSignalled()) {
+					this.running = false;
+					return;
+				}
 			}
+		}
+	}
+
+	private class RMQCollector implements Collector<OUT> {
+
+		private final SourceContext<OUT> ctx;
+		private boolean endOfStreamSignalled = false;
+
+		private RMQCollector(SourceContext<OUT> ctx) {
+			this.ctx = ctx;
+		}
+
+		@Override
+		public void collect(OUT record) {
+			if (endOfStreamSignalled || (schema != null && schema.isEndOfStream(record))) {
+				this.endOfStreamSignalled = true;
+				return;
+			}
+
+			ctx.collect(record);
+		}
+
+		public void collect(List<OUT> records) {
+			for (OUT record : records){
+				collect(record);
+			}
+		}
+
+		public boolean isEndOfStreamSignalled() {
+			return endOfStreamSignalled;
+		}
+
+		@Override
+		public void close() {
+
 		}
 	}
 
@@ -353,6 +367,6 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 
 	@Override
 	public TypeInformation<OUT> getProducedType() {
-		return deliveryParser == null ? schema.getProducedType() : deliveryParser.getProducedType();
+		return deliveryDeserializer == null ? schema.getProducedType() : deliveryDeserializer.getProducedType();
 	}
 }
