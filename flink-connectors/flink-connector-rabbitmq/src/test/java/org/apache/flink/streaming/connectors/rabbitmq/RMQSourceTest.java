@@ -219,7 +219,7 @@ public class RMQSourceTest {
 
 			assertEquals(numIds, messageIds.size());
 			if (messageIds.size() > 0) {
-				assertTrue(messageIds.contains(Long.toString(lastSnapshotId - 1)));
+				assertTrue(messageIds.contains(Long.toString(lastSnapshotId)));
 			}
 
 			// check if the messages are being acknowledged and the transaction committed
@@ -330,17 +330,22 @@ public class RMQSourceTest {
 	 */
 	@Test
 	public void testProcessMessage() throws Exception {
-		RMQTestSource sourceDeserializer = new RMQTestSource();
-		sourceDeserializer.open(config);
-		RMQDeserializedMessage message = sourceDeserializer.processMessage(sourceDeserializer.mockedDelivery);
-		assertEquals("test", message.getMessages().get(0));
-		assertEquals("0", message.getCorrelationID());
+		RMQTestSource source = new RMQTestSource();
+		source.open(config);
+		RMQSource.RMQCollector collector = Mockito.mock(RMQSource.RMQCollector.class);
+		source.processMessage(source.mockedDelivery, collector);
+		Mockito.verify(collector, Mockito.times(1)).collect("test");
+		Mockito.verify(collector, Mockito.times(1)).setCorrelationId("1");
 
-		RMQTestSource sourceParser = new RMQTestSource(new CustomDeserializationSchema());
-		sourceParser.open(config);
-		message = sourceParser.processMessage(sourceDeserializer.mockedDelivery);
-		assertEquals("I Love Turtles", message.getMessages().get(0));
-		assertEquals("0-MESSAGE_ID", message.getCorrelationID());
+		source = new RMQTestSource(new CustomDeserializationSchema());
+		source.open(config);
+		List<String> expectedOutput = new ArrayList<>(1);
+		expectedOutput = new ArrayList<>(1);
+		expectedOutput.add("I Love Turtles");
+		collector = Mockito.mock(RMQSource.RMQCollector.class);
+		source.processMessage(source.mockedDelivery, collector);
+		Mockito.verify(collector, Mockito.times(1)).collect(Mockito.eq(expectedOutput));
+		Mockito.verify(collector, Mockito.times(1)).setCorrelationId("2-MESSAGE_ID");
 	}
 
 	@Test
@@ -416,10 +421,16 @@ public class RMQSourceTest {
 		}
 
 		@Override
-		public RMQDeserializedMessage processMessage(Envelope envelope, AMQP.BasicProperties properties, byte[] body) throws IOException {
+		public void processMessage(Envelope envelope, AMQP.BasicProperties properties, byte[] body, RMQSource.RMQCollector collector) throws IOException {
 			List<String> messages = new ArrayList();
 			messages.add("I Love Turtles");
-			return new RMQDeserializedMessage<String>(messages, properties.getMessageId());
+			collector.setCorrelationId(properties.getMessageId());
+			collector.collect(messages);
+		}
+
+		@Override
+		public boolean isEndOfStream(String record) {
+			return false;
 		}
 	}
 
@@ -607,4 +618,5 @@ public class RMQSourceTest {
 		public void close() {
 		}
 	}
+
 }

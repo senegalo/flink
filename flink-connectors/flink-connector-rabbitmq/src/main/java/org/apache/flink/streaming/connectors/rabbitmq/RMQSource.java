@@ -39,7 +39,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -255,29 +254,30 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	}
 
 	/**
-	 * Parse and returns the body of the an AMQP message.
+	 * Parse and collects the body of the an AMQP message.
 	 *
 	 * <p>If any of the constructors with the {@link DeserializationSchema} class was used to construct the source
 	 * it uses the {@link DeserializationSchema#deserialize(byte[])} to parse the body of the AMQP message.
 	 *
 	 * <p>If any of the constructors with the {@link RMQDeserializationSchema } class was used to construct the source it uses the
-	 * {@link RMQDeserializationSchema#processMessage(Envelope, AMQP.BasicProperties, byte[])} method of that provided instance.
+	 * {@link RMQDeserializationSchema#processMessage(Envelope, AMQP.BasicProperties, byte[], RMQCollector collector)}
+	 * method of that provided instance.
 	 *
 	 * @param delivery the AMQP {@link QueueingConsumer.Delivery}
-	 * @return OUT
+	 * @param collector a {@link RMQCollector} to collect the data
 	 * @throws IOException
 	 */
-	protected RMQDeserializedMessage processMessage(QueueingConsumer.Delivery delivery) throws IOException {
+	protected void processMessage(QueueingConsumer.Delivery delivery, RMQCollector collector) throws IOException {
 		AMQP.BasicProperties properties = delivery.getProperties();
 		byte[] body = delivery.getBody();
+		collector.setDeliveryTag(delivery.getEnvelope().getDeliveryTag());
 
 		if (deliveryDeserializer != null){
 			Envelope envelope = delivery.getEnvelope();
-			return deliveryDeserializer.processMessage(envelope, properties, body);
+			deliveryDeserializer.processMessage(envelope, properties, body, collector);
 		} else {
-			List<OUT> records = new ArrayList(1);
-			records.add(schema.deserialize(body));
-			return new RMQDeserializedMessage(records, properties.getCorrelationId());
+			collector.setCorrelationId(properties.getCorrelationId());
+			collector.collect(schema.deserialize(body));
 		}
 	}
 
@@ -286,25 +286,8 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 		final RMQCollector collector = new RMQCollector(ctx);
 		while (running) {
 			QueueingConsumer.Delivery delivery = consumer.nextDelivery();
-			RMQDeserializedMessage parsedMessage = processMessage(delivery);
-
 			synchronized (ctx.getCheckpointLock()) {
-				if (!autoAck) {
-					final long deliveryTag = delivery.getEnvelope().getDeliveryTag();
-					if (usesCorrelationId) {
-						final String correlationId = parsedMessage.getCorrelationID();
-						Preconditions.checkNotNull(correlationId, "RabbitMQ source was instantiated " +
-							"with usesCorrelationId set to true yet we couldn't extract the correlation id from it !");
-						if (!addId(correlationId)) {
-							// we have already processed this message
-							continue;
-						}
-					}
-					sessionIds.add(deliveryTag);
-				}
-
-				collector.collect(parsedMessage.getMessages());
-
+				processMessage(delivery, collector);
 				if (collector.isEndOfStreamSignalled()) {
 					this.running = false;
 					return;
@@ -313,10 +296,17 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 		}
 	}
 
-	private class RMQCollector implements Collector<OUT> {
-
+	/**
+	 * Special collector for RMQ messages.
+	 * Captures the correlation ID and delivery tag also does the filtering logic for weather a message has been
+	 * processed or not.
+	 */
+	public class RMQCollector implements Collector<OUT> {
 		private final SourceContext<OUT> ctx;
 		private boolean endOfStreamSignalled = false;
+		private String correlationId;
+		private long deliveryTag;
+		private Boolean preCheckFlag;
 
 		private RMQCollector(SourceContext<OUT> ctx) {
 			this.ctx = ctx;
@@ -324,18 +314,58 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 
 		@Override
 		public void collect(OUT record) {
-			if (endOfStreamSignalled || (schema != null && schema.isEndOfStream(record))) {
+			if (!preCollectCheck()) {
+				return;
+			}
+			if (isEndOfStream(record)) {
 				this.endOfStreamSignalled = true;
 				return;
 			}
-
 			ctx.collect(record);
 		}
 
 		public void collect(List<OUT> records) {
-			for (OUT record : records){
-				collect(record);
+			if (!preCollectCheck()) {
+				return;
 			}
+			for (OUT record : records){
+				if (isEndOfStream(record)) {
+					this.endOfStreamSignalled = true;
+					return;
+				}
+				ctx.collect(record);
+			}
+		}
+
+		public void setCorrelationId(String correlationId) {
+			this.correlationId = correlationId;
+		}
+
+		public void setDeliveryTag(long deliveryTag){
+			this.deliveryTag = deliveryTag;
+		}
+
+		private boolean preCollectCheck(){
+			preCheckFlag = true;
+			if (!autoAck) {
+				if (usesCorrelationId) {
+					Preconditions.checkNotNull(correlationId, "RabbitMQ source was instantiated " +
+						"with usesCorrelationId set to true yet we couldn't extract the correlation id from it !");
+					if (!addId(correlationId)) {
+						// we have already processed this message
+						preCheckFlag = false;
+						return false;
+					}
+				}
+				sessionIds.add(deliveryTag);
+			}
+			return preCheckFlag;
+		}
+
+		public boolean isEndOfStream(OUT record) {
+			return endOfStreamSignalled ||
+				(schema != null && schema.isEndOfStream(record)) ||
+				(deliveryDeserializer != null && deliveryDeserializer.isEndOfStream(record));
 		}
 
 		public boolean isEndOfStreamSignalled() {
