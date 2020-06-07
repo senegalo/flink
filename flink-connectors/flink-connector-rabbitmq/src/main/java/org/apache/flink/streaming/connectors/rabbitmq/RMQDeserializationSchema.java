@@ -34,7 +34,7 @@ public interface RMQDeserializationSchema<T> extends Serializable, ResultTypeQue
 	/**
 	 * This method takes all the RabbitMQ delivery information supplied by the client extract the data and pass it to the
 	 * collector.
-	 * NOTICE: The implementation of this method MUST call {@link RMQSource.RMQCollector#setCorrelationId(String)} with
+	 * NOTICE: The implementation of this method MUST call {@link RMQCollector#setCorrelationId(String)} with
 	 * the correlation ID of the message if checkpointing and UseCorrelationID (in the RMQSource constructor) were enabled
 	 * the {@link RMQSource}.
 	 * @param envelope
@@ -42,7 +42,7 @@ public interface RMQDeserializationSchema<T> extends Serializable, ResultTypeQue
 	 * @param body
 	 * @throws IOException
 	 */
-	public  void processMessage(Envelope envelope, AMQP.BasicProperties properties, byte[] body, RMQSource.RMQCollector collector) throws IOException;
+	public  void processMessage(Envelope envelope, AMQP.BasicProperties properties, byte[] body, RMQCollector collector) throws IOException;
 
 	/**
 	 * Method to decide whether the element signals the end of the stream. If

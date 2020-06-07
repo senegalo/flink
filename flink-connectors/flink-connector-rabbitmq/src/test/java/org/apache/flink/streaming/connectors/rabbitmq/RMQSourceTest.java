@@ -219,7 +219,7 @@ public class RMQSourceTest {
 
 			assertEquals(numIds, messageIds.size());
 			if (messageIds.size() > 0) {
-				assertTrue(messageIds.contains(Long.toString(lastSnapshotId)));
+				assertTrue(messageIds.contains(Long.toString(lastSnapshotId - 1)));
 			}
 
 			// check if the messages are being acknowledged and the transaction committed
@@ -332,20 +332,20 @@ public class RMQSourceTest {
 	public void testProcessMessage() throws Exception {
 		RMQTestSource source = new RMQTestSource();
 		source.open(config);
-		RMQSource.RMQCollector collector = Mockito.mock(RMQSource.RMQCollector.class);
+		RMQCollector collector = Mockito.mock(RMQCollector.class);
 		source.processMessage(source.mockedDelivery, collector);
 		Mockito.verify(collector, Mockito.times(1)).collect("test");
-		Mockito.verify(collector, Mockito.times(1)).setCorrelationId("1");
+		Mockito.verify(collector, Mockito.times(1)).setMessageIdentifiers("0", messageId);
 
 		source = new RMQTestSource(new CustomDeserializationSchema());
 		source.open(config);
 		List<String> expectedOutput = new ArrayList<>(1);
-		expectedOutput = new ArrayList<>(1);
 		expectedOutput.add("I Love Turtles");
-		collector = Mockito.mock(RMQSource.RMQCollector.class);
+		expectedOutput.add("Brush your teeth");
+		collector = Mockito.mock(RMQCollector.class);
 		source.processMessage(source.mockedDelivery, collector);
 		Mockito.verify(collector, Mockito.times(1)).collect(Mockito.eq(expectedOutput));
-		Mockito.verify(collector, Mockito.times(1)).setCorrelationId("2-MESSAGE_ID");
+		Mockito.verify(collector, Mockito.times(1)).setMessageIdentifiers("1-MESSAGE_ID", messageId);
 	}
 
 	@Test
@@ -421,10 +421,11 @@ public class RMQSourceTest {
 		}
 
 		@Override
-		public void processMessage(Envelope envelope, AMQP.BasicProperties properties, byte[] body, RMQSource.RMQCollector collector) throws IOException {
+		public void processMessage(Envelope envelope, AMQP.BasicProperties properties, byte[] body, RMQCollector collector) throws IOException {
 			List<String> messages = new ArrayList();
 			messages.add("I Love Turtles");
-			collector.setCorrelationId(properties.getMessageId());
+			messages.add("Brush your teeth");
+			collector.setMessageIdentifiers(properties.getMessageId(), envelope.getDeliveryTag());
 			collector.collect(messages);
 		}
 

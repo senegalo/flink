@@ -26,7 +26,6 @@ import org.apache.flink.streaming.api.functions.source.MessageAcknowledgingSourc
 import org.apache.flink.streaming.api.functions.source.MultipleIdsMessageAcknowledgingSourceBase;
 import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
 import org.apache.flink.streaming.connectors.rabbitmq.common.RMQConnectionConfig;
-import org.apache.flink.util.Collector;
 import org.apache.flink.util.Preconditions;
 
 import com.rabbitmq.client.AMQP;
@@ -264,26 +263,25 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * method of that provided instance.
 	 *
 	 * @param delivery the AMQP {@link QueueingConsumer.Delivery}
-	 * @param collector a {@link RMQCollector} to collect the data
+	 * @param collector a {@link RMQCollectorImpl} to collect the data
 	 * @throws IOException
 	 */
 	protected void processMessage(QueueingConsumer.Delivery delivery, RMQCollector collector) throws IOException {
 		AMQP.BasicProperties properties = delivery.getProperties();
 		byte[] body = delivery.getBody();
-		collector.setDeliveryTag(delivery.getEnvelope().getDeliveryTag());
 
 		if (deliveryDeserializer != null){
 			Envelope envelope = delivery.getEnvelope();
 			deliveryDeserializer.processMessage(envelope, properties, body, collector);
 		} else {
-			collector.setCorrelationId(properties.getCorrelationId());
+			collector.setMessageIdentifiers(properties.getCorrelationId(), delivery.getEnvelope().getDeliveryTag());
 			collector.collect(schema.deserialize(body));
 		}
 	}
 
 	@Override
 	public void run(SourceContext<OUT> ctx) throws Exception {
-		final RMQCollector collector = new RMQCollector(ctx);
+		final RMQCollectorImpl collector = new RMQCollectorImpl(ctx);
 		while (running) {
 			QueueingConsumer.Delivery delivery = consumer.nextDelivery();
 			synchronized (ctx.getCheckpointLock()) {
@@ -301,22 +299,25 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * Captures the correlation ID and delivery tag also does the filtering logic for weather a message has been
 	 * processed or not.
 	 */
-	public class RMQCollector implements Collector<OUT> {
+	private class RMQCollectorImpl implements RMQCollector<OUT> {
 		private final SourceContext<OUT> ctx;
 		private boolean endOfStreamSignalled = false;
-		private String correlationId;
 		private long deliveryTag;
 		private Boolean preCheckFlag;
 
-		private RMQCollector(SourceContext<OUT> ctx) {
+		private RMQCollectorImpl(SourceContext<OUT> ctx) {
 			this.ctx = ctx;
 		}
 
 		@Override
 		public void collect(OUT record) {
-			if (!preCollectCheck()) {
+			Preconditions.checkNotNull(preCheckFlag, "setCorrelationID must be called at least once before" +
+				"calling this method !");
+
+			if (!preCheckFlag) {
 				return;
 			}
+
 			if (isEndOfStream(record)) {
 				this.endOfStreamSignalled = true;
 				return;
@@ -325,9 +326,13 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 		}
 
 		public void collect(List<OUT> records) {
-			if (!preCollectCheck()) {
+			Preconditions.checkNotNull(preCheckFlag, "setCorrelationID must be called at least once before" +
+				"calling this method !");
+
+			if (!preCheckFlag) {
 				return;
 			}
+
 			for (OUT record : records){
 				if (isEndOfStream(record)) {
 					this.endOfStreamSignalled = true;
@@ -337,15 +342,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 			}
 		}
 
-		public void setCorrelationId(String correlationId) {
-			this.correlationId = correlationId;
-		}
-
-		public void setDeliveryTag(long deliveryTag){
-			this.deliveryTag = deliveryTag;
-		}
-
-		private boolean preCollectCheck(){
+		public void setMessageIdentifiers(String correlationId, long deliveryTag){
 			preCheckFlag = true;
 			if (!autoAck) {
 				if (usesCorrelationId) {
@@ -354,12 +351,10 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 					if (!addId(correlationId)) {
 						// we have already processed this message
 						preCheckFlag = false;
-						return false;
 					}
 				}
 				sessionIds.add(deliveryTag);
 			}
-			return preCheckFlag;
 		}
 
 		public boolean isEndOfStream(OUT record) {
