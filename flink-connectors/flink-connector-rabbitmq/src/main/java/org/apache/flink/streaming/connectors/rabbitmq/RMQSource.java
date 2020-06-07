@@ -259,14 +259,14 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * it uses the {@link DeserializationSchema#deserialize(byte[])} to parse the body of the AMQP message.
 	 *
 	 * <p>If any of the constructors with the {@link RMQDeserializationSchema } class was used to construct the source it uses the
-	 * {@link RMQDeserializationSchema#processMessage(Envelope, AMQP.BasicProperties, byte[], RMQCollector collector)}
+	 * {@link RMQDeserializationSchema#processMessage(Envelope, AMQP.BasicProperties, byte[], RMQDeserializationSchema.RMQCollector collector)}
 	 * method of that provided instance.
 	 *
 	 * @param delivery the AMQP {@link QueueingConsumer.Delivery}
 	 * @param collector a {@link RMQCollectorImpl} to collect the data
 	 * @throws IOException
 	 */
-	protected void processMessage(QueueingConsumer.Delivery delivery, RMQCollector collector) throws IOException {
+	protected void processMessage(QueueingConsumer.Delivery delivery, RMQDeserializationSchema.RMQCollector collector) throws IOException {
 		AMQP.BasicProperties properties = delivery.getProperties();
 		byte[] body = delivery.getBody();
 
@@ -299,7 +299,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * Captures the correlation ID and delivery tag also does the filtering logic for weather a message has been
 	 * processed or not.
 	 */
-	private class RMQCollectorImpl implements RMQCollector<OUT> {
+	private class RMQCollectorImpl implements RMQDeserializationSchema.RMQCollector<OUT> {
 		private final SourceContext<OUT> ctx;
 		private boolean endOfStreamSignalled = false;
 		private long deliveryTag;

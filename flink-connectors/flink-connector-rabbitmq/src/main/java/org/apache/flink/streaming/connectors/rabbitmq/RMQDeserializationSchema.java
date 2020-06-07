@@ -19,12 +19,14 @@ package org.apache.flink.streaming.connectors.rabbitmq;
 
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.ResultTypeQueryable;
+import org.apache.flink.util.Collector;
 
 import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.Envelope;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.List;
 
 /**
  * Interface for the set of methods required to parse an RMQ delivery.
@@ -34,7 +36,7 @@ public interface RMQDeserializationSchema<T> extends Serializable, ResultTypeQue
 	/**
 	 * This method takes all the RabbitMQ delivery information supplied by the client extract the data and pass it to the
 	 * collector.
-	 * NOTICE: The implementation of this method MUST call {@link RMQCollector#setCorrelationId(String)} with
+	 * NOTICE: The implementation of this method MUST call {@link RMQCollector#setMessageIdentifiers(String, long)} with
 	 * the correlation ID of the message if checkpointing and UseCorrelationID (in the RMQSource constructor) were enabled
 	 * the {@link RMQSource}.
 	 * @param envelope
@@ -60,4 +62,17 @@ public interface RMQDeserializationSchema<T> extends Serializable, ResultTypeQue
 	 * @return TypeInformation
 	 */
 	public TypeInformation<T> getProducedType();
+
+
+	/**
+	 * Special collector for RMQ messages.
+	 * Captures the correlation ID and delivery tag also does the filtering logic for weather a message has been
+	 * processed or not.
+	 * @param <T>
+	 */
+	public interface RMQCollector<T> extends Collector<T> {
+		public void collect(List<T> records);
+
+		public void setMessageIdentifiers(String correlationId, long deliveryTag);
+	}
 }

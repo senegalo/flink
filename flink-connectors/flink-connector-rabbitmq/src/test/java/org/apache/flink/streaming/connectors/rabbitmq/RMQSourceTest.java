@@ -332,7 +332,7 @@ public class RMQSourceTest {
 	public void testProcessMessage() throws Exception {
 		RMQTestSource source = new RMQTestSource();
 		source.open(config);
-		RMQCollector collector = Mockito.mock(RMQCollector.class);
+		RMQDeserializationSchema.RMQCollector collector = Mockito.mock(RMQDeserializationSchema.RMQCollector.class);
 		source.processMessage(source.mockedDelivery, collector);
 		Mockito.verify(collector, Mockito.times(1)).collect("test");
 		Mockito.verify(collector, Mockito.times(1)).setMessageIdentifiers("0", messageId);
@@ -342,7 +342,7 @@ public class RMQSourceTest {
 		List<String> expectedOutput = new ArrayList<>(1);
 		expectedOutput.add("I Love Turtles");
 		expectedOutput.add("Brush your teeth");
-		collector = Mockito.mock(RMQCollector.class);
+		collector = Mockito.mock(RMQDeserializationSchema.RMQCollector.class);
 		source.processMessage(source.mockedDelivery, collector);
 		Mockito.verify(collector, Mockito.times(1)).collect(Mockito.eq(expectedOutput));
 		Mockito.verify(collector, Mockito.times(1)).setMessageIdentifiers("1-MESSAGE_ID", messageId);
