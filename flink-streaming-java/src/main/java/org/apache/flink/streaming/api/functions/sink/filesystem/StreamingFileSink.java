@@ -98,31 +98,19 @@ public class StreamingFileSink<IN>
 
 	private final long bucketCheckInterval;
 
-	private final StreamingFileSink.BucketsBuilder<IN, ?, ? extends BucketsBuilder<IN, ?, ?>> bucketsBuilder;
+	private final BucketsBuilder<IN, ?, ? extends BucketsBuilder<IN, ?, ?>> bucketsBuilder;
 
 	// --------------------------- runtime fields -----------------------------
 
 	private transient StreamingFileSinkHelper<IN> helper;
 
 	/**
-	 * Creates a new {@code StreamingFileSink} that writes files in row-based format to the given base directory.
+	 * Creates a new {@code StreamingFileSink} that writes files to the given base directory
+	 * with the give buckets properties.
 	 */
 	protected StreamingFileSink(
-		final RowFormatBuilder<IN, ?, ? extends BucketsBuilder<IN, ?, ?>> bucketsBuilder,
-		final long bucketCheckInterval) {
-
-		Preconditions.checkArgument(bucketCheckInterval > 0L);
-
-		this.bucketsBuilder = Preconditions.checkNotNull(bucketsBuilder);
-		this.bucketCheckInterval = bucketCheckInterval;
-	}
-
-	/**
-	 * Creates a new {@code StreamingFileSink} that writes files in bulk-encoded format to the given base directory.
-	 */
-	protected StreamingFileSink(
-		final BulkFormatBuilder<IN, ?, ? extends BucketsBuilder<IN, ?, ?>> bucketsBuilder,
-		final long bucketCheckInterval) {
+		BucketsBuilder<IN, ?, ? extends BucketsBuilder<IN, ?, ?>> bucketsBuilder,
+		long bucketCheckInterval) {
 
 		Preconditions.checkArgument(bucketCheckInterval > 0L);
 
@@ -201,8 +189,6 @@ public class StreamingFileSink<IN>
 
 		private OutputFileConfig outputFileConfig;
 
-		private BucketLifeCycleListener<IN, BucketID> bucketLifeCycleListener;
-
 		protected RowFormatBuilder(Path basePath, Encoder<IN> encoder, BucketAssigner<IN, BucketID> bucketAssigner) {
 			this(basePath, encoder, bucketAssigner, DefaultRollingPolicy.builder().build(), DEFAULT_BUCKET_CHECK_INTERVAL, new DefaultBucketFactoryImpl<>(), OutputFileConfig.builder().build());
 		}
@@ -243,12 +229,6 @@ public class StreamingFileSink<IN>
 			return self();
 		}
 
-		@Internal
-		public T withBucketLifeCycleListener(final BucketLifeCycleListener<IN, BucketID> listener) {
-			this.bucketLifeCycleListener = Preconditions.checkNotNull(listener);
-			return self();
-		}
-
 		public T withOutputFileConfig(final OutputFileConfig outputFileConfig) {
 			this.outputFileConfig = outputFileConfig;
 			return self();
@@ -277,9 +257,8 @@ public class StreamingFileSink<IN>
 					basePath,
 					bucketAssigner,
 					bucketFactory,
-					new RowWisePartWriter.Factory<>(encoder),
+					new RowWiseBucketWriter<>(FileSystem.get(basePath.toUri()).createRecoverableWriter(), encoder),
 					rollingPolicy,
-					bucketLifeCycleListener,
 					subtaskIndex,
 					outputFileConfig);
 		}
@@ -314,8 +293,6 @@ public class StreamingFileSink<IN>
 		private BucketAssigner<IN, BucketID> bucketAssigner;
 
 		private CheckpointRollingPolicy<IN, BucketID> rollingPolicy;
-
-		private BucketLifeCycleListener<IN, BucketID> bucketLifeCycleListener;
 
 		private BucketFactory<IN, BucketID> bucketFactory;
 
@@ -362,12 +339,6 @@ public class StreamingFileSink<IN>
 			return self();
 		}
 
-		@Internal
-		public T withBucketLifeCycleListener(final BucketLifeCycleListener<IN, BucketID> listener) {
-			this.bucketLifeCycleListener = Preconditions.checkNotNull(listener);
-			return self();
-		}
-
 		@VisibleForTesting
 		T withBucketFactory(final BucketFactory<IN, BucketID> factory) {
 			this.bucketFactory = Preconditions.checkNotNull(factory);
@@ -397,9 +368,8 @@ public class StreamingFileSink<IN>
 					basePath,
 					bucketAssigner,
 					bucketFactory,
-					new BulkPartWriter.Factory<>(writerFactory),
+					new BulkBucketWriter<>(FileSystem.get(basePath.toUri()).createRecoverableWriter(), writerFactory),
 					rollingPolicy,
-					bucketLifeCycleListener,
 					subtaskIndex,
 					outputFileConfig);
 		}
@@ -433,6 +403,10 @@ public class StreamingFileSink<IN>
 	@Override
 	public void notifyCheckpointComplete(long checkpointId) throws Exception {
 		this.helper.commitUpToCheckpoint(checkpointId);
+	}
+
+	@Override
+	public void notifyCheckpointAborted(long checkpointId) {
 	}
 
 	@Override
