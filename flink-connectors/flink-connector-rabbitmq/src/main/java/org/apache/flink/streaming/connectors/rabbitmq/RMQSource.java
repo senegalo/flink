@@ -79,7 +79,6 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	protected final String queueName;
 	private final boolean usesCorrelationId;
 	protected RMQDeserializationSchema<OUT> deliveryDeserializer;
-	protected DeserializationSchema<OUT> schema;
 
 	protected transient Connection connection;
 	protected transient Channel channel;
@@ -124,7 +123,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 		this.rmqConnectionConfig = rmqConnectionConfig;
 		this.queueName = queueName;
 		this.usesCorrelationId = usesCorrelationId;
-		this.schema = deserializationSchema;
+		this.deliveryDeserializer = wrapDeserializationSchema(deserializationSchema);
 	}
 
 	/**
@@ -165,6 +164,33 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 		this.queueName = queueName;
 		this.usesCorrelationId = usesCorrelationId;
 		this.deliveryDeserializer = deliveryDeserializer;
+	}
+
+	static <T> RMQDeserializationSchema<T> wrapDeserializationSchema(DeserializationSchema<T> schema) {
+		return new RMQDeserializationSchema<T>() {
+			@Override
+			public void deserialize(Envelope envelope, AMQP.BasicProperties properties, byte[] body, RMQCollector collector) throws IOException {
+				final long deliveryTag = envelope.getDeliveryTag();
+				final String correlationId = properties.getCorrelationId();
+				collector.setMessageIdentifiers(correlationId, deliveryTag);
+				collector.collect(schema.deserialize(body));
+			}
+
+			@Override
+			public TypeInformation<T> getProducedType() {
+				return schema.getProducedType();
+			}
+
+			@Override
+			public void open(DeserializationSchema.InitializationContext context) throws Exception {
+				schema.open(context);
+			}
+
+			@Override
+			public boolean isEndOfStream(T nextElement) {
+				return schema.isEndOfStream(nextElement);
+			}
+		};
 	}
 
 	/**
@@ -221,9 +247,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 			throw new RuntimeException("Cannot create RMQ connection with " + queueName + " at "
 					+ rmqConnectionConfig.getHost(), e);
 		}
-		if (this.schema != null) {
-			this.schema.open(() -> getRuntimeContext().getMetricGroup().addGroup("user"));
-		}
+		this.deliveryDeserializer.open(() -> getRuntimeContext().getMetricGroup().addGroup("user"));
 		running = true;
 	}
 
@@ -266,7 +290,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * it uses the {@link DeserializationSchema#deserialize(byte[])} to parse the body of the AMQP message.
 	 *
 	 * <p>If any of the constructors with the {@link RMQDeserializationSchema } class was used to construct the source it uses the
-	 * {@link RMQDeserializationSchema#processMessage(Envelope, AMQP.BasicProperties, byte[], RMQDeserializationSchema.RMQCollector collector)}
+	 * {@link RMQDeserializationSchema#deserialize(Envelope, AMQP.BasicProperties, byte[], RMQDeserializationSchema.RMQCollector collector)}
 	 * method of that provided instance.
 	 *
 	 * @param delivery the AMQP {@link QueueingConsumer.Delivery}
@@ -276,14 +300,9 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	protected void processMessage(QueueingConsumer.Delivery delivery, RMQDeserializationSchema.RMQCollector collector) throws IOException {
 		AMQP.BasicProperties properties = delivery.getProperties();
 		byte[] body = delivery.getBody();
+		Envelope envelope = delivery.getEnvelope();
 
-		if (deliveryDeserializer != null){
-			Envelope envelope = delivery.getEnvelope();
-			deliveryDeserializer.processMessage(envelope, properties, body, collector);
-		} else {
-			collector.setMessageIdentifiers(properties.getCorrelationId(), delivery.getEnvelope().getDeliveryTag());
-			collector.collect(schema.deserialize(body));
-		}
+		deliveryDeserializer.deserialize(envelope, properties, body, collector);
 	}
 
 	@Override
@@ -364,10 +383,8 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 			}
 		}
 
-		public boolean isEndOfStream(OUT record) {
-			return endOfStreamSignalled ||
-				(schema != null && schema.isEndOfStream(record)) ||
-				(deliveryDeserializer != null && deliveryDeserializer.isEndOfStream(record));
+		boolean isEndOfStream(OUT record) {
+			return endOfStreamSignalled || deliveryDeserializer.isEndOfStream(record);
 		}
 
 		public boolean isEndOfStreamSignalled() {
@@ -399,6 +416,6 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 
 	@Override
 	public TypeInformation<OUT> getProducedType() {
-		return deliveryDeserializer == null ? schema.getProducedType() : deliveryDeserializer.getProducedType();
+		return deliveryDeserializer.getProducedType();
 	}
 }

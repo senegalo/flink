@@ -17,6 +17,7 @@
 
 package org.apache.flink.streaming.connectors.rabbitmq;
 
+import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.ResultTypeQueryable;
 import org.apache.flink.util.Collector;
@@ -44,7 +45,7 @@ public interface RMQDeserializationSchema<T> extends Serializable, ResultTypeQue
 	 * @param body
 	 * @throws IOException
 	 */
-	public  void processMessage(Envelope envelope, AMQP.BasicProperties properties, byte[] body, RMQCollector collector) throws IOException;
+	public  void deserialize(Envelope envelope, AMQP.BasicProperties properties, byte[] body, RMQCollector collector) throws IOException;
 
 	/**
 	 * Method to decide whether the element signals the end of the stream. If
@@ -53,7 +54,7 @@ public interface RMQDeserializationSchema<T> extends Serializable, ResultTypeQue
 	 * @param nextElement The element to test for the end-of-stream signal.
 	 * @return True, if the element signals end of stream, false otherwise.
 	 */
-	public boolean isEndOfStream(T nextElement);
+	boolean isEndOfStream(T nextElement);
 
 	/**
 	 * The {@link TypeInformation} for the deserialized T.
@@ -62,6 +63,17 @@ public interface RMQDeserializationSchema<T> extends Serializable, ResultTypeQue
 	 * @return TypeInformation
 	 */
 	public TypeInformation<T> getProducedType();
+
+	/**
+	 * Initialization method for the schema. It is called before the actual working methods
+	 * {@link #deserialize} and thus suitable for one time setup work.
+	 *
+	 * <p>The provided {@link DeserializationSchema.InitializationContext} can be used to access additional features such as e.g.
+	 * registering user metrics.
+	 *
+	 * @param context Contextual information that can be used during initialization.
+	 */
+	public void open(DeserializationSchema.InitializationContext context) throws Exception;
 
 
 	/**

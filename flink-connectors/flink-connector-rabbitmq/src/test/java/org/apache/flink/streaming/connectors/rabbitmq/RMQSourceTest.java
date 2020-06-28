@@ -325,7 +325,7 @@ public class RMQSourceTest {
 	 * from the {@link QueueingConsumer.Delivery} and the correlation ID from the {@link AMQP.BasicProperties} which are
 	 * mocked to "I Love Turtles" and "0".
 	 * if the constructor with the {@link RMQDeserializationSchema} was called it uses the
-	 * {@link RMQDeserializationSchema#processMessage} method to parse the message and extract the correlation ID which
+	 * {@link RMQDeserializationSchema#deserialize} method to parse the message and extract the correlation ID which
 	 * both are implemented in {@link RMQTestSource#initAMQPMocks()} to return the
 	 * {@link AMQP.BasicProperties#getMessageId()} that is mocked to return "1-MESSAGE_ID"
 	 */
@@ -336,7 +336,7 @@ public class RMQSourceTest {
 		RMQDeserializationSchema.RMQCollector collector = Mockito.mock(RMQDeserializationSchema.RMQCollector.class);
 		source.processMessage(source.mockedDelivery, collector);
 		Mockito.verify(collector, Mockito.times(1)).collect("test");
-		Mockito.verify(collector, Mockito.times(1)).setMessageIdentifiers("0", messageId);
+		Mockito.verify(collector, Mockito.times(1)).setMessageIdentifiers("1", messageId);
 
 		source = new RMQTestSource(new CustomDeserializationSchema());
 		source.open(config);
@@ -442,7 +442,12 @@ public class RMQSourceTest {
 		}
 
 		@Override
-		public void processMessage(Envelope envelope, AMQP.BasicProperties properties, byte[] body, RMQCollector collector) throws IOException {
+		public void open(DeserializationSchema.InitializationContext context) throws Exception {
+
+		}
+
+		@Override
+		public void deserialize(Envelope envelope, AMQP.BasicProperties properties, byte[] body, RMQCollector collector) throws IOException {
 			List<String> messages = new ArrayList();
 			messages.add("I Love Turtles");
 			messages.add("Brush your teeth");
