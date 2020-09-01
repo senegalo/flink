@@ -17,6 +17,7 @@
 
 package org.apache.flink.streaming.connectors.rabbitmq;
 
+import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.functions.RuntimeContext;
 import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -32,8 +33,8 @@ import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.Delivery;
 import com.rabbitmq.client.Envelope;
-import com.rabbitmq.client.QueueingConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -205,8 +206,28 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * Initializes the connection to RMQ using the default connection factory from {@link #setupConnectionFactory()}.
 	 * The user may override this method to setup and configure their own {@link Connection}.
 	 */
+	@VisibleForTesting
 	protected Connection setupConnection() throws Exception {
 		return setupConnectionFactory().newConnection();
+	}
+
+	/**
+	 * Initializes the consumer's {@link Channel}. If a prefetch count has been set in {@link RMQConnectionConfig},
+	 * the new channel will be use it for {@link Channel#basicQos(int)}.
+	 *
+	 * @param connection the consumer's {@link Connection}.
+	 * @return the channel.
+	 * @throws Exception if there is an issue creating or configuring the channel.
+	 */
+	private Channel setupChannel(Connection connection) throws Exception {
+		Channel chan = connection.createChannel();
+		if (rmqConnectionConfig.getPrefetchCount().isPresent()) {
+			// set the global flag for the entire channel, though shouldn't make a difference
+			// since there is only one consumer, and each parallel instance of the source will
+			// create a new connection (and channel)
+			chan.basicQos(rmqConnectionConfig.getPrefetchCount().get(), true);
+		}
+		return chan;
 	}
 
 	/**
@@ -214,6 +235,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * this method to have a custom setup for the queue (i.e. binding the queue to an exchange or
 	 * defining custom queue parameters)
 	 */
+	@VisibleForTesting
 	protected void setupQueue() throws IOException {
 		Util.declareQueueDefaults(channel, queueName);
 	}
@@ -223,7 +245,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 		super.open(config);
 		try {
 			connection = setupConnection();
-			channel = connection.createChannel();
+			channel = setupChannel(connection);
 			if (channel == null) {
 				throw new RuntimeException("None of RabbitMQ channels are available");
 			}
@@ -293,11 +315,11 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	 * {@link RMQDeserializationSchema#deserialize(Envelope, AMQP.BasicProperties, byte[], RMQDeserializationSchema.RMQCollector collector)}
 	 * method of that provided instance.
 	 *
-	 * @param delivery the AMQP {@link QueueingConsumer.Delivery}
+	 * @param delivery the AMQP {@link Delivery}
 	 * @param collector a {@link RMQCollectorImpl} to collect the data
 	 * @throws IOException
 	 */
-	protected void processMessage(QueueingConsumer.Delivery delivery, RMQDeserializationSchema.RMQCollector collector) throws IOException {
+	protected void processMessage(Delivery delivery, RMQDeserializationSchema.RMQCollector collector) throws IOException {
 		AMQP.BasicProperties properties = delivery.getProperties();
 		byte[] body = delivery.getBody();
 		Envelope envelope = delivery.getEnvelope();
@@ -309,7 +331,8 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	public void run(SourceContext<OUT> ctx) throws Exception {
 		final RMQCollectorImpl collector = new RMQCollectorImpl(ctx);
 		while (running) {
-			QueueingConsumer.Delivery delivery = consumer.nextDelivery();
+			Delivery delivery = consumer.nextDelivery();
+
 			synchronized (ctx.getCheckpointLock()) {
 				processMessage(delivery, collector);
 				if (collector.isEndOfStreamSignalled()) {

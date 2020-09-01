@@ -84,7 +84,7 @@ public class RemoteInputChannel extends InputChannel {
 	private int expectedSequenceNumber = 0;
 
 	/** The initial number of exclusive buffers assigned to this channel. */
-	private int initialCredit;
+	private final int initialCredit;
 
 	/** The number of available buffers that have not been announced to the producer yet. */
 	private final AtomicInteger unannouncedCredit = new AtomicInteger(0);
@@ -109,11 +109,13 @@ public class RemoteInputChannel extends InputChannel {
 		ConnectionManager connectionManager,
 		int initialBackOff,
 		int maxBackoff,
+		int networkBuffersPerChannel,
 		Counter numBytesIn,
 		Counter numBuffersIn) {
 
 		super(inputGate, channelIndex, partitionId, initialBackOff, maxBackoff, numBytesIn, numBuffersIn);
 
+		this.initialCredit = networkBuffersPerChannel;
 		this.connectionId = checkNotNull(connectionId);
 		this.connectionManager = checkNotNull(connectionManager);
 		this.bufferManager = new BufferManager(inputGate.getMemorySegmentProvider(), this, 0);
@@ -124,10 +126,10 @@ public class RemoteInputChannel extends InputChannel {
 	 * after this input channel is created.
 	 */
 	void assignExclusiveSegments() throws IOException {
-		checkState(initialCredit == 0, "Bug in input channel setup logic: exclusive buffers have " +
-			"already been set for this input channel.");
+		checkState(bufferManager.unsynchronizedGetAvailableExclusiveBuffers() == 0,
+			"Bug in input channel setup logic: exclusive buffers have already been set for this input channel.");
 
-		initialCredit = bufferManager.requestExclusiveBuffers();
+		bufferManager.requestExclusiveBuffers(initialCredit);
 	}
 
 	// ------------------------------------------------------------------------
@@ -157,7 +159,7 @@ public class RemoteInputChannel extends InputChannel {
 	 * Retriggers a remote subpartition request.
 	 */
 	void retriggerSubpartitionRequest(int subpartitionIndex) throws IOException {
-		checkState(partitionRequestClient != null, "Missing initial subpartition request.");
+		checkPartitionRequestQueueInitialized();
 
 		if (increaseBackoff()) {
 			partitionRequestClient.requestSubpartition(
@@ -169,9 +171,7 @@ public class RemoteInputChannel extends InputChannel {
 
 	@Override
 	Optional<BufferAndAvailability> getNextBuffer() throws IOException {
-		checkState(partitionRequestClient != null, "Queried for a buffer before requesting a queue.");
-
-		checkError();
+		checkPartitionRequestQueueInitialized();
 
 		final Buffer next;
 		final boolean moreAvailable;
@@ -227,9 +227,7 @@ public class RemoteInputChannel extends InputChannel {
 	@Override
 	void sendTaskEvent(TaskEvent event) throws IOException {
 		checkState(!isReleased.get(), "Tried to send task event to producer after channel has been released.");
-		checkState(partitionRequestClient != null, "Tried to send task event to producer before requesting a queue.");
-
-		checkError();
+		checkPartitionRequestQueueInitialized();
 
 		partitionRequestClient.sendTaskEvent(partitionId, event, this);
 	}
@@ -283,8 +281,8 @@ public class RemoteInputChannel extends InputChannel {
 	/**
 	 * Enqueue this input channel in the pipeline for notifying the producer of unannounced credit.
 	 */
-	private void notifyCreditAvailable() {
-		checkState(partitionRequestClient != null, "Tried to send task event to producer before requesting a queue.");
+	private void notifyCreditAvailable() throws IOException {
+		checkPartitionRequestQueueInitialized();
 
 		partitionRequestClient.notifyCreditAvailable(this);
 	}
@@ -330,16 +328,16 @@ public class RemoteInputChannel extends InputChannel {
 	 * increased credit to the producer.
 	 */
 	@Override
-	public void notifyBufferAvailable(int numAvailableBuffers) {
+	public void notifyBufferAvailable(int numAvailableBuffers) throws IOException {
 		if (numAvailableBuffers > 0 && unannouncedCredit.getAndAdd(numAvailableBuffers) == 0) {
 			notifyCreditAvailable();
 		}
 	}
 
 	@Override
-	public void resumeConsumption() {
+	public void resumeConsumption() throws IOException {
 		checkState(!isReleased.get(), "Channel released.");
-		checkState(partitionRequestClient != null, "Trying to send event to producer before requesting a queue.");
+		checkPartitionRequestQueueInitialized();
 
 		// notifies the producer that this channel is ready to
 		// unblock from checkpoint and resume data consumption
@@ -385,7 +383,7 @@ public class RemoteInputChannel extends InputChannel {
 	}
 
 	public int unsynchronizedGetExclusiveBuffersUsed() {
-		return Math.max(0, initialCredit - bufferManager.unsynchronizedGetExclusiveBuffersUsed());
+		return Math.max(0, initialCredit - bufferManager.unsynchronizedGetAvailableExclusiveBuffers());
 	}
 
 	public int unsynchronizedGetFloatingBuffersAvailable() {
@@ -517,6 +515,12 @@ public class RemoteInputChannel extends InputChannel {
 
 	public void onError(Throwable cause) {
 		setError(cause);
+	}
+
+	private void checkPartitionRequestQueueInitialized() throws IOException {
+		checkError();
+		checkState(partitionRequestClient != null,
+				"Bug: partitionRequestClient is not initialized before processing data and no error is detected.");
 	}
 
 	private static class BufferReorderingException extends IOException {

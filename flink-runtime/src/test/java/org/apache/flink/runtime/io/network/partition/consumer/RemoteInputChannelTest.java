@@ -335,6 +335,18 @@ public class RemoteInputChannelTest {
 		ch.getNextBuffer();
 	}
 
+	@Test(expected = PartitionConnectionException.class)
+	public void testPartitionConnectionException() throws IOException {
+		final ConnectionManager connManager = new TestingExceptionConnectionManager();
+		final SingleInputGate gate = createSingleInputGate(1);
+		final RemoteInputChannel ch = InputChannelTestUtils.createRemoteInputChannel(gate, 0, connManager);
+		gate.setInputChannels(ch);
+
+		gate.requestPartitions();
+
+		ch.getNextBuffer();
+	}
+
 	/**
 	 * Tests to verify the behaviours of three different processes if the number of available
 	 * buffers is less than required buffers.
@@ -348,7 +360,7 @@ public class RemoteInputChannelTest {
 	@Test
 	public void testAvailableBuffersLessThanRequiredBuffers() throws Exception {
 		// Setup
-		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(16, 32, 2);
+		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(16, 32);
 		final int numFloatingBuffers = 14;
 
 		final SingleInputGate inputGate = createSingleInputGate(1, networkBufferPool);
@@ -487,7 +499,7 @@ public class RemoteInputChannelTest {
 	@Test
 	public void testAvailableBuffersEqualToRequiredBuffers() throws Exception {
 		// Setup
-		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(16, 32, 2);
+		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(16, 32);
 		final int numFloatingBuffers = 14;
 
 		final SingleInputGate inputGate = createSingleInputGate(1, networkBufferPool);
@@ -562,7 +574,7 @@ public class RemoteInputChannelTest {
 	@Test
 	public void testAvailableBuffersMoreThanRequiredBuffers() throws Exception {
 		// Setup
-		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(16, 32, 2);
+		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(16, 32);
 		final int numFloatingBuffers = 14;
 
 		final SingleInputGate inputGate = createSingleInputGate(1, networkBufferPool);
@@ -652,7 +664,7 @@ public class RemoteInputChannelTest {
 	public void testFairDistributionFloatingBuffers() throws Exception {
 		// Setup
 		final int numExclusiveBuffers = 2;
-		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(12, 32, numExclusiveBuffers);
+		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(12, 32);
 		final int numFloatingBuffers = 3;
 
 		final SingleInputGate inputGate = createSingleInputGate(3, networkBufferPool);
@@ -715,8 +727,7 @@ public class RemoteInputChannelTest {
 		final int numExclusiveBuffers = 1;
 		final int numFloatingBuffers = 1;
 		final int numTotalBuffers = numExclusiveBuffers + numFloatingBuffers;
-		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(
-			numTotalBuffers, 32, numExclusiveBuffers);
+		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(numTotalBuffers, 32);
 
 		final SingleInputGate inputGate = createSingleInputGate(1);
 		final RemoteInputChannel successfulRemoteIC = createRemoteInputChannel(inputGate);
@@ -774,7 +785,7 @@ public class RemoteInputChannelTest {
 	@Test
 	public void testConcurrentOnSenderBacklogAndRelease() throws Exception {
 		// Setup
-		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(130, 32, 2);
+		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(130, 32);
 		final int numFloatingBuffers = 128;
 
 		final ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -835,14 +846,14 @@ public class RemoteInputChannelTest {
 	public void testConcurrentOnSenderBacklogAndRecycle() throws Exception {
 		// Setup
 		final int numExclusiveSegments = 120;
-		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(248, 32, numExclusiveSegments);
+		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(248, 32);
 		final int numFloatingBuffers = 128;
 		final int backlog = 128;
 
 		final ExecutorService executor = Executors.newFixedThreadPool(3);
 
 		final SingleInputGate inputGate = createSingleInputGate(1, networkBufferPool);
-		final RemoteInputChannel inputChannel = createRemoteInputChannel(inputGate);
+		final RemoteInputChannel inputChannel = InputChannelTestUtils.createRemoteInputChannel(inputGate, numExclusiveSegments);
 		inputGate.setInputChannels(inputChannel);
 		Throwable thrown = null;
 		try {
@@ -887,13 +898,13 @@ public class RemoteInputChannelTest {
 	public void testConcurrentRecycleAndRelease() throws Exception {
 		// Setup
 		final int numExclusiveSegments = 120;
-		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(248, 32, numExclusiveSegments);
+		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(248, 32);
 		final int numFloatingBuffers = 128;
 
 		final ExecutorService executor = Executors.newFixedThreadPool(3);
 
 		final SingleInputGate inputGate = createSingleInputGate(1, networkBufferPool);
-		final RemoteInputChannel inputChannel = createRemoteInputChannel(inputGate);
+		final RemoteInputChannel inputChannel = InputChannelTestUtils.createRemoteInputChannel(inputGate, numExclusiveSegments);
 		inputGate.setInputChannels(inputChannel);
 		Throwable thrown = null;
 		try {
@@ -941,8 +952,7 @@ public class RemoteInputChannelTest {
 		final int numExclusiveBuffers = 2;
 		final int numFloatingBuffers = 2;
 		final int numTotalBuffers = numExclusiveBuffers + numFloatingBuffers;
-		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(
-			numTotalBuffers, 32, numExclusiveBuffers);
+		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(numTotalBuffers, 32);
 
 		final ExecutorService executor = Executors.newFixedThreadPool(2);
 
@@ -1014,9 +1024,8 @@ public class RemoteInputChannelTest {
 	@Test
 	public void testConcurrentGetNextBufferAndRelease() throws Exception {
 		final int numTotalBuffers  = 1_000;
-		final int numExclusiveBuffers = 2;
 		final int numFloatingBuffers = 998;
-		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(numTotalBuffers, 32, numExclusiveBuffers);
+		final NetworkBufferPool networkBufferPool = new NetworkBufferPool(numTotalBuffers, 32);
 		final SingleInputGate inputGate = createSingleInputGate(1, networkBufferPool);
 		final RemoteInputChannel inputChannel = createRemoteInputChannel(inputGate);
 		inputGate.setInputChannels(inputChannel);
@@ -1215,7 +1224,7 @@ public class RemoteInputChannelTest {
 		TestBufferReceivedListener listener = new TestBufferReceivedListener();
 		SingleInputGate inputGate = new SingleInputGateBuilder().build();
 		inputGate.registerBufferReceivedListener(listener);
-		RemoteInputChannel channel = InputChannelBuilder.newBuilder().buildRemoteChannel(inputGate);
+		RemoteInputChannel channel = InputChannelTestUtils.createRemoteInputChannel(inputGate, 0);
 		channel.onBuffer(toBuffer(new CheckpointBarrier(123L, 123L, new CheckpointOptions(SAVEPOINT, CheckpointStorageLocationReference.getDefault()))), 0, 0);
 		channel.checkError();
 		assertTrue(listener.notifiedOnBarriers.isEmpty());

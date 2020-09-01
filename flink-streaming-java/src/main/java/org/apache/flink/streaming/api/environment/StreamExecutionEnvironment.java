@@ -59,7 +59,6 @@ import org.apache.flink.core.execution.PipelineExecutor;
 import org.apache.flink.core.execution.PipelineExecutorFactory;
 import org.apache.flink.core.execution.PipelineExecutorServiceLoader;
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.runtime.state.AbstractStateBackend;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
 import org.apache.flink.runtime.state.StateBackend;
 import org.apache.flink.runtime.state.StateBackendLoader;
@@ -203,7 +202,7 @@ public class StreamExecutionEnvironment {
 	public StreamExecutionEnvironment(
 			final Configuration configuration,
 			final ClassLoader userClassloader) {
-		this(DefaultExecutorServiceLoader.INSTANCE, configuration, userClassloader);
+		this(new DefaultExecutorServiceLoader(), configuration, userClassloader);
 	}
 
 	/**
@@ -559,16 +558,6 @@ public class StreamExecutionEnvironment {
 	 */
 	@PublicEvolving
 	public StreamExecutionEnvironment setStateBackend(StateBackend backend) {
-		this.defaultStateBackend = Preconditions.checkNotNull(backend);
-		return this;
-	}
-
-	/**
-	 * @deprecated Use {@link #setStateBackend(StateBackend)} instead.
-	 */
-	@Deprecated
-	@PublicEvolving
-	public StreamExecutionEnvironment setStateBackend(AbstractStateBackend backend) {
 		this.defaultStateBackend = Preconditions.checkNotNull(backend);
 		return this;
 	}
@@ -1629,11 +1618,11 @@ public class StreamExecutionEnvironment {
 	 * @return the data stream constructed
 	 */
 	@Experimental
-	public <OUT> DataStreamSource<OUT> continuousSource(
+	public <OUT> DataStreamSource<OUT> fromSource(
 			Source<OUT, ?, ?> source,
 			WatermarkStrategy<OUT> timestampsAndWatermarks,
 			String sourceName) {
-		return continuousSource(source, timestampsAndWatermarks, sourceName, null);
+		return fromSource(source, timestampsAndWatermarks, sourceName, null);
 	}
 
 	/**
@@ -1650,7 +1639,7 @@ public class StreamExecutionEnvironment {
 	 * @return the data stream constructed
 	 */
 	@Experimental
-	public <OUT> DataStreamSource<OUT> continuousSource(
+	public <OUT> DataStreamSource<OUT> fromSource(
 			Source<OUT, ?, ?> source,
 			WatermarkStrategy<OUT> timestampsAndWatermarks,
 			String sourceName,
@@ -2170,7 +2159,7 @@ public class StreamExecutionEnvironment {
 			Class<?> baseSourceClass,
 			TypeInformation<OUT> typeInfo) {
 		TypeInformation<OUT> resolvedTypeInfo = typeInfo;
-		if (source instanceof ResultTypeQueryable) {
+		if (resolvedTypeInfo == null && source instanceof ResultTypeQueryable) {
 			resolvedTypeInfo = ((ResultTypeQueryable<OUT>) source).getProducedType();
 		}
 		if (resolvedTypeInfo == null) {

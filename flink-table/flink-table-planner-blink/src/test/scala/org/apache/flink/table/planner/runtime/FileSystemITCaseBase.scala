@@ -73,7 +73,8 @@ trait FileSystemITCaseBase {
          |  x string,
          |  y int,
          |  a int,
-         |  b bigint
+         |  b bigint,
+         |  c as b + 1
          |) partitioned by (a, b) with (
          |  'connector' = 'filesystem',
          |  'path' = '$resultPath',
@@ -186,6 +187,11 @@ trait FileSystemITCaseBase {
     )
 
     check(
+      "select x, y, a, b, c from partitionedTable where a=1 and c=2",
+      data_partition_1_2
+    )
+
+    check(
       "select x, y from partitionedTable",
       data
     )
@@ -243,8 +249,8 @@ trait FileSystemITCaseBase {
 
   @Test
   def testProjectPushDown(): Unit = {
-    tableEnv.sqlUpdate("insert into partitionedTable select x, y, a, b from originalT")
-    tableEnv.execute("test")
+    execInsertSqlAndWaitResult(
+      tableEnv, "insert into partitionedTable select x, y, a, b from originalT")
 
     check(
       "select y, b, x from partitionedTable where a=3",
@@ -350,5 +356,13 @@ object FileSystemITCaseBase {
     row("x13", 13),
     row("x14", 14),
     row("x15", 15)
+  )
+
+  val data_partition_1_2: Seq[Row] = Seq(
+    row("x1", 1, 1, 1, 2),
+    row("x2", 2, 1, 1, 2),
+    row("x3", 3, 1, 1, 2),
+    row("x4", 4, 1, 1, 2),
+    row("x5", 5, 1, 1, 2)
   )
 }

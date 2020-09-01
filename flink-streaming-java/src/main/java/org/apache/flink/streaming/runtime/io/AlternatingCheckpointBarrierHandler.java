@@ -46,7 +46,7 @@ class AlternatingCheckpointBarrierHandler extends CheckpointBarrierHandler {
 	}
 
 	@Override
-	public void releaseBlocksAndResetBarriers() {
+	public void releaseBlocksAndResetBarriers() throws IOException {
 		activeHandler.releaseBlocksAndResetBarriers();
 	}
 
@@ -92,6 +92,11 @@ class AlternatingCheckpointBarrierHandler extends CheckpointBarrierHandler {
 	@Override
 	public long getAlignmentDurationNanos() {
 		return activeHandler.getAlignmentDurationNanos();
+	}
+
+	@Override
+	public long getCheckpointStartDelayNanos() {
+		return activeHandler.getCheckpointStartDelayNanos();
 	}
 
 	@Override

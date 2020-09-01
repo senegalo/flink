@@ -193,6 +193,38 @@ public class StreamingJobGraphGeneratorTest extends TestLogger {
 	}
 
 	@Test
+	public void testEnabledUnalignedCheckAndDisabledCheckpointing() {
+		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+		env.fromElements(0).print();
+		StreamGraph streamGraph = env.getStreamGraph();
+		assertFalse("Checkpointing enabled", streamGraph.getCheckpointConfig().isCheckpointingEnabled());
+		env.getCheckpointConfig().enableUnalignedCheckpoints(true);
+
+		JobGraph jobGraph = StreamingJobGraphGenerator.createJobGraph(streamGraph);
+
+		List<JobVertex> verticesSorted = jobGraph.getVerticesSortedTopologicallyFromSources();
+		StreamConfig streamConfig = new StreamConfig(verticesSorted.get(0).getConfiguration());
+		assertEquals(CheckpointingMode.AT_LEAST_ONCE, streamConfig.getCheckpointMode());
+		assertFalse(streamConfig.isUnalignedCheckpointsEnabled());
+	}
+
+	@Test
+	public void testUnalignedCheckAndAtLeastOnce() {
+		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+		env.fromElements(0).print();
+		StreamGraph streamGraph = env.getStreamGraph();
+		env.enableCheckpointing(1000, CheckpointingMode.AT_LEAST_ONCE);
+		env.getCheckpointConfig().enableUnalignedCheckpoints(true);
+
+		JobGraph jobGraph = StreamingJobGraphGenerator.createJobGraph(streamGraph);
+
+		List<JobVertex> verticesSorted = jobGraph.getVerticesSortedTopologicallyFromSources();
+		StreamConfig streamConfig = new StreamConfig(verticesSorted.get(0).getConfiguration());
+		assertEquals(CheckpointingMode.AT_LEAST_ONCE, streamConfig.getCheckpointMode());
+		assertFalse(streamConfig.isUnalignedCheckpointsEnabled());
+	}
+
+	@Test
 	public void generatorForwardsSavepointRestoreSettings() {
 		StreamGraph streamGraph = new StreamGraph(
 				new ExecutionConfig(),
@@ -251,7 +283,7 @@ public class StreamingJobGraphGeneratorTest extends TestLogger {
 	@Test
 	public void testOperatorCoordinatorAddedToJobVertex() {
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-		DataStream<Integer> stream = env.continuousSource(
+		DataStream<Integer> stream = env.fromSource(
 				new MockSource(Boundedness.BOUNDED, 1),
 				WatermarkStrategy.noWatermarks(),
 				"TestingSource");
@@ -461,7 +493,7 @@ public class StreamingJobGraphGeneratorTest extends TestLogger {
 	@Test
 	public void testCoordinatedOperator() {
 		StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-		DataStream<Integer> source = env.continuousSource(
+		DataStream<Integer> source = env.fromSource(
 				new MockSource(Boundedness.BOUNDED, 1),
 				WatermarkStrategy.noWatermarks(),
 				"TestSource");

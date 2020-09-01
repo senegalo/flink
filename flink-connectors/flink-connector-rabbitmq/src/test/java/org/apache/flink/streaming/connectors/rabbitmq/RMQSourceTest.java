@@ -40,8 +40,8 @@ import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.Delivery;
 import com.rabbitmq.client.Envelope;
-import com.rabbitmq.client.QueueingConsumer;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -65,7 +65,8 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 
 /**
  * Tests for the RMQSource. The source supports two operation modes.
@@ -322,7 +323,7 @@ public class RMQSourceTest {
 	/**
 	 * Tests getting the correct body and correlationID given which constructor was called.
 	 * if the constructor with the {@link DeserializationSchema} was called it should extract the body of the message
-	 * from the {@link QueueingConsumer.Delivery} and the correlation ID from the {@link AMQP.BasicProperties} which are
+	 * from the {@link Delivery} and the correlation ID from the {@link AMQP.BasicProperties} which are
 	 * mocked to "I Love Turtles" and "0".
 	 * if the constructor with the {@link RMQDeserializationSchema} was called it uses the
 	 * {@link RMQDeserializationSchema#deserialize} method to parse the message and extract the correlation ID which
@@ -380,6 +381,56 @@ public class RMQSourceTest {
 		source.open(new Configuration());
 
 		Mockito.verify(mockConnection, Mockito.times(1)).createChannel();
+	}
+
+	@Test
+	public void testSetPrefetchCount() throws Exception {
+		RMQConnectionConfig connectionConfig = new RMQConnectionConfig.Builder()
+			.setHost("localhost")
+			.setPort(5000)
+			.setUserName("guest")
+			.setPassword("guest")
+			.setVirtualHost("/")
+			.setPrefetchCount(1000)
+			.build();
+		final Connection mockConnection = Mockito.mock(Connection.class);
+		Channel channel = Mockito.mock(Channel.class);
+		Mockito.when(mockConnection.createChannel()).thenReturn(channel);
+
+		RMQMockedRuntimeTestSource source = new RMQMockedRuntimeTestSource(connectionConfig) {
+			@Override
+			protected Connection setupConnection() throws Exception {
+				return mockConnection;
+			}
+		};
+
+		FunctionInitializationContext mockContext = getMockContext();
+		source.initializeState(mockContext);
+		source.open(new Configuration());
+
+		Mockito.verify(mockConnection, Mockito.times(1)).createChannel();
+		Mockito.verify(channel, Mockito.times(1)).basicQos(1000, true);
+	}
+
+	@Test
+	public void testUnsetPrefetchCount() throws Exception {
+		final Connection mockConnection = Mockito.mock(Connection.class);
+		Channel channel = Mockito.mock(Channel.class);
+		Mockito.when(mockConnection.createChannel()).thenReturn(channel);
+
+		RMQMockedRuntimeTestSource source = new RMQMockedRuntimeTestSource() {
+			@Override
+			protected Connection setupConnection() throws Exception {
+				return mockConnection;
+			}
+		};
+
+		FunctionInitializationContext mockContext = getMockContext();
+		source.initializeState(mockContext);
+		source.open(new Configuration());
+
+		Mockito.verify(mockConnection, Mockito.times(1)).createChannel();
+		Mockito.verify(channel, Mockito.times(0)).basicQos(anyInt());
 	}
 
 	private static class ConstructorTestClass extends RMQSource<String> {
@@ -511,7 +562,7 @@ public class RMQSourceTest {
 	private class RMQTestSource extends RMQMockedRuntimeTestSource {
 		private ArrayDeque<Tuple2<Long, Set<String>>> restoredState;
 
-		private QueueingConsumer.Delivery mockedDelivery;
+		private Delivery mockedDelivery;
 		public Envelope mockedAMQPEnvelope;
 		public AMQP.BasicProperties mockedAMQPProperties;
 
@@ -541,7 +592,7 @@ public class RMQSourceTest {
 			consumer = Mockito.mock(QueueingConsumer.class);
 
 			// Mock for delivery
-			mockedDelivery = Mockito.mock(QueueingConsumer.Delivery.class);
+			mockedDelivery = Mockito.mock(Delivery.class);
 			Mockito.when(mockedDelivery.getBody()).thenReturn("test".getBytes(ConfigConstants.DEFAULT_CHARSET));
 
 			try {
@@ -649,5 +700,4 @@ public class RMQSourceTest {
 		public void close() {
 		}
 	}
-
 }
