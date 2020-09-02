@@ -323,7 +323,6 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 		AMQP.BasicProperties properties = delivery.getProperties();
 		byte[] body = delivery.getBody();
 		Envelope envelope = delivery.getEnvelope();
-
 		deliveryDeserializer.deserialize(envelope, properties, body, collector);
 	}
 
@@ -334,6 +333,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 			Delivery delivery = consumer.nextDelivery();
 
 			synchronized (ctx.getCheckpointLock()) {
+				collector.reset();
 				processMessage(delivery, collector);
 				if (collector.isEndOfStreamSignalled()) {
 					this.running = false;
@@ -351,8 +351,7 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 	private class RMQCollectorImpl implements RMQDeserializationSchema.RMQCollector<OUT> {
 		private final SourceContext<OUT> ctx;
 		private boolean endOfStreamSignalled = false;
-		private long deliveryTag;
-		private Boolean preCheckFlag;
+		private Boolean messageValidated;
 
 		private RMQCollectorImpl(SourceContext<OUT> ctx) {
 			this.ctx = ctx;
@@ -360,10 +359,10 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 
 		@Override
 		public void collect(OUT record) {
-			Preconditions.checkNotNull(preCheckFlag, "setCorrelationID must be called at least once before" +
+			Preconditions.checkNotNull(messageValidated, "setMessageIdentifiers must be called at least once before" +
 				"calling this method !");
 
-			if (!preCheckFlag) {
+			if (!messageValidated) {
 				return;
 			}
 
@@ -375,10 +374,10 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 		}
 
 		public void collect(List<OUT> records) {
-			Preconditions.checkNotNull(preCheckFlag, "setCorrelationID must be called at least once before" +
+			Preconditions.checkNotNull(messageValidated, "setMessageIdentifiers must be called at least once before" +
 				"calling this method !");
 
-			if (!preCheckFlag) {
+			if (!messageValidated) {
 				return;
 			}
 
@@ -392,14 +391,14 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 		}
 
 		public void setMessageIdentifiers(String correlationId, long deliveryTag){
-			preCheckFlag = true;
+			messageValidated = true;
 			if (!autoAck) {
 				if (usesCorrelationId) {
 					Preconditions.checkNotNull(correlationId, "RabbitMQ source was instantiated " +
 						"with usesCorrelationId set to true yet we couldn't extract the correlation id from it !");
 					if (!addId(correlationId)) {
 						// we have already processed this message
-						preCheckFlag = false;
+						messageValidated = false;
 					}
 				}
 				sessionIds.add(deliveryTag);
@@ -412,6 +411,10 @@ public class RMQSource<OUT> extends MultipleIdsMessageAcknowledgingSourceBase<OU
 
 		public boolean isEndOfStreamSignalled() {
 			return endOfStreamSignalled;
+		}
+
+		public void reset() {
+			messageValidated = null;
 		}
 
 		@Override
